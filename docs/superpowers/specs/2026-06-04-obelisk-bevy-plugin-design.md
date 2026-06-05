@@ -83,8 +83,8 @@ obelisk-bevy/
 
 ### 3.2 Spatiotemporal skill / casting (`timeline/`)
 12. `CastTimelineAsset` (§7) — phases, collision/hurtbox windows, shapes, motion, targeting, range, delivery, vfx-cue ids. References a `Skill` id. **Mandatory for every castable skill** — there is exactly one cast path; a self-buff/instant skill ships a minimal timeline (instant/zero-duration phases, no collision windows, `SelfCast`). `cast_*` fails with `CastRejectReason::TimelineMissing` if a skill has no loaded `.cast.ron`.
-13. `ActiveCast` component — authoritative cast state machine: handle, elapsed, `SkillPhase`, resolved targets, `fired_windows`. Driven by fixed-timestep timers.
-14. Phase timeline: crossing a phase boundary emits `CastPhaseChanged`; opening/closing a collision window spawns/despawns a `Hitbox` and emits `HitWindowOpened` / `HitWindowClosed`.
+13. `ActiveCast` component — authoritative cast state machine: handle, elapsed, `SkillPhase`, resolved targets, `fired_windows`, and the **speed-scaled effective phase durations** (a snapshot computed at cast start from the caster's effective cast/attack speed — §7.1). Driven by fixed-timestep timers.
+14. Phase timeline: crossing a phase boundary emits `CastPhaseChanged`; opening/closing a collision window spawns/despawns a `Hitbox` and emits `HitWindowOpened` / `HitWindowClosed`. **Authored phase/animation-window times are *base* values scaled by §7.1**; cooldowns use `Skill::effective_cooldown`.
 15. "Use a skill" primitives — `cast_skill` / `cast_skill_at(Vec3)` / `cast_skill_dir(Dir3)` / `interrupt_cast` EntityCommands verbs → `CastRequested` → validation → `ActiveCast` or `CastRejected`.
 16. Cast validation: range, line-of-sight, cooldown, mana + `use_conditions` (via `can_use_skill`), asset-loaded. Structured `CastRejectReason`.
 17. Projectile motion for `Delivery::Projectile` (obelisk's projectile resolves instantly, so *flight* is new): `Projectile` component over an Avian Kinematic body; lifetime, pierce/chain counts, on-hit despawn rules.
@@ -235,6 +235,28 @@ The load-time validator requires a `.cast.ron` for every skill that can be cast;
 - **Division of authority:** the asset owns *when* a hit fires (deterministic fixed-timestep phase/window timing); obelisk owns *what* the hit does (damage/effects/triggers). obelisk has no timing fields, so the asset's `phase_durations` are the sole timing authority — a 0.3s windup on a rules-instant skill is legal and expected. Document this.
 - **Drive loop:** `ObeliskSet::Advance` adds `FixedTime` delta to `ActiveCast.elapsed`; phase crossings emit `CastPhaseChanged`. `SpawnVolumes` spawns an Avian Kinematic Sensor `Hitbox` when `elapsed` enters a window, with the converted collider + `CollisionLayers` filtered by `Faction`/`HitFilter`, emits `HitWindowOpened`, despawns after `active_duration`. `VolumeMotion` integrates the volume's transform each fixed step.
 
+### 7.1 Speed scaling — phase durations respond to attack/cast speed
+
+obelisk skills carry `attack_speed_modifier` and `StatBlock` carries `attack_speed` / `cast_speed` (`StatValue`, base `1.0`, scaled by increases/more). Authored `.cast.ron` times are **base** values; the timeline plays them faster/slower per the caster's speed, so a high-attack-speed character visibly swings faster and a slow weapon (e.g. `flaming_slash`'s `attack_speed_modifier = 0.8`) is sluggish.
+
+**Speed source (which stat).** Choose the base rate from the skill's tags via obelisk's own predicates:
+- `skill.is_spell()` → `caster.cast_speed.compute()`
+- else `skill.is_attack()` → `caster.attack_speed.compute()`
+- neither (pure utility) → `1.0` (no scaling)
+- (a skill tagged both Attack+Spell resolves to attack by default — confirm during impl.)
+
+**Effective rate.** `rate = skill.effective_speed(base_rate)` = `base_rate * attack_speed_modifier`. `rate == 1.0` means "play as authored"; `rate == 1.5` means 50% faster. Guard against `rate <= 0`.
+
+**What scales (÷ rate), what doesn't:**
+- **Scales:** all `phase_durations` (windup/active/recovery/channel) and the **animation-bound** window timings (`spawn_offset`, and `active_duration` for `Static`/`Attached` melee volumes). The *whole cast animation* compresses uniformly so hit frames stay aligned with the visual. `effective = base / rate`.
+- **Does NOT scale:** projectile world motion (`VolumeMotion::Linear { speed }` in units/sec) and a projectile window's real-world `active_duration`/lifetime — those are world-space, independent of how fast the caster wound up. (A per-window `time_basis: Animation | World` flag, defaulting to `Animation` for melee and `World` for projectiles, is the clean way to express this — finalize in impl.)
+- **Cooldown** is separate from the timeline: `Cooldowns` uses `Skill::effective_cooldown(cooldown_reduction)`, not `rate`.
+- **`skill_duration_increased`** scales *effect/buff/DoT durations* (handled inside obelisk's effect system), **not** the cast timeline — keep them distinct.
+
+**When sampled.** Compute `rate` and the effective phase durations **once at cast start** and snapshot them into `ActiveCast` (deterministic; a mid-cast haste buff doesn't retroactively warp the in-flight cast). Channels may re-sample per channel tick — decide in impl.
+
+**Events.** `CastBegan.total_duration` and `CastPhaseChanged.phase_duration`/`elapsed` report **effective** (post-scaling) seconds, so VFX/animation that sync to the timeline (§6) stay aligned at any speed. Optionally also expose `rate` on `CastBegan` so a consumer can set an animation playback-speed multiplier in one line.
+
 ---
 
 ## 8. Test binary & automated testing
@@ -264,6 +286,8 @@ Full `DefaultPlugins` 3D app: a controllable player, dummy enemies with `Combata
 | Effect shape | `Effect { total_duration, timers: StackTimers (Shared/PerStack), magnitude, stacks, … }` — **no flat `duration`** | `EffectApplied` payload uses `total_duration` + `timers` |
 | Identity | `StatBlock.id` / `source_id` / `Effect.source_id` are `String` | `ObeliskEntityIndex` bimap |
 | Stat sources | `rebuild_from_sources`, `equip`, `skill_tree::SkillTree::to_stat_source` | `make_combatant` / `apply_stat_sources` |
+| Cast/attack speed | `Skill::effective_speed(base) = base * attack_speed_modifier`; `Skill::is_attack()` / `is_spell()`; `StatBlock.attack_speed` / `cast_speed` (`StatValue`, `.compute()`); `Skill::effective_cooldown(cdr)` | §7.1 — picks attack vs cast speed by tag, scales base `phase_durations` (`÷ rate`) snapshotted into `ActiveCast` at cast start; `Cooldowns` uses `effective_cooldown` |
+| Effect/buff duration | `StatBlock.skill_duration_increased` (inside obelisk's effect system) | scales effect/DoT durations only — **not** the cast timeline |
 | Loot / tables | `loot_core::Generator`/`Config`; `tables_core::DropTableRegistry` | `ItemGenerator` / `DropTables`, fired off `EntityDied` by the consumer |
 
 ---
@@ -313,3 +337,4 @@ Deliverables: the crate skeleton + `ObeliskCorePlugin` (init, registry, RNG, ind
 11. `SkillResult` contents (does it carry the `packets` the funnel consumes?) and the exact split of responsibilities between `use_skill_against` and `resolve_damage_with_triggers` (avoid double-resolution).
 12. Interrupt/refund: `use_skill_against` consumes resources up front and has no refund API — decide plugin-side policy.
 13. `Effect` field confirmation (`total_duration` + `StackTimers`, no `duration`); buff-bar UI reconstructs remaining time from timers.
+14. Speed scaling (§7.1): confirm `attack_speed`/`cast_speed` `.compute()` semantics are a rate multiplier (base `1.0`); decide the `time_basis: Animation | World` per-window flag + defaults; decide a skill tagged both Attack+Spell; decide whether channels re-sample `rate` per tick or snapshot at start; clamp `rate > 0`.
