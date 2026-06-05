@@ -1,8 +1,10 @@
 use bevy::prelude::*;
-use crate::assets::{CastTimeline, CastTimelineHandles};
+use crate::assets::{CastTimeline, CastTimelineHandles, WindowPhase, VolumeMotion};
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
-use crate::events::{CastBegan, CastRejected, CastRejectReason};
+use crate::events::{CastBegan, CastRejected, CastRejectReason, CastPhaseChanged, HitWindowOpened};
+use crate::spatial::boxes::Hitbox;
+use crate::spatial::projectile::Projectile;
 use crate::timeline::cast::PendingCast;
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
 
@@ -50,5 +52,63 @@ pub fn validate_casts(
             fired_windows: Vec::new(),
         });
         commands.trigger(CastBegan { caster, skill_id: req.skill_id.clone(), total_duration: windup + active + recovery });
+    }
+}
+
+pub fn advance_casts(
+    mut commands: Commands,
+    time: Res<Time<Fixed>>,
+    mut casts: Query<(Entity, &mut ActiveCast, &Transform)>,
+    registry: Res<SkillRegistry>,
+    handles: Res<CastTimelineHandles>,
+    timelines: Res<Assets<CastTimeline>>,
+) {
+    let dt = time.delta_secs();
+    for (caster, mut cast, caster_tf) in &mut casts {
+        let prev_phase = cast.phase;
+        let prev_elapsed = cast.elapsed;
+        cast.elapsed += dt;
+        let new_phase = cast.phase_at(cast.elapsed);
+        if new_phase != prev_phase {
+            cast.phase = new_phase;
+            commands.trigger(CastPhaseChanged { caster, skill_id: cast.skill_id.clone(), from: prev_phase, to: new_phase, elapsed: cast.elapsed });
+        }
+
+        // Spawn collision windows whose start time was crossed this tick.
+        let Some(handle) = handles.0.get(&cast.skill_id) else { continue };
+        let Some(timeline) = timelines.get(handle) else { continue };
+        for win in &timeline.collision_windows {
+            if cast.fired_windows.contains(&win.id) { continue; }
+            let base = match win.spawn_phase { WindowPhase::Windup => 0.0, WindowPhase::Active => cast.windup, WindowPhase::Recovery => cast.windup + cast.active };
+            let start = base + win.spawn_offset;
+            if prev_elapsed < start && cast.elapsed >= start {
+                cast.fired_windows.push(win.id.clone());
+                let dir = Vec3::Z; // slice: forward; future: aim at target position
+                let mut ent = commands.spawn((
+                    Hitbox { caster, skill_id: cast.skill_id.clone(), window_id: win.id.clone(), filter: win.hit_filter, mode: win.hit_mode, remaining: win.active_duration, already_hit: Vec::new() },
+                    Transform::from_translation(caster_tf.translation),
+                ));
+                if let VolumeMotion::Linear { speed } = win.motion {
+                    ent.insert(Projectile { velocity: dir * speed });
+                }
+                let hitbox_entity = ent.id();
+                commands.trigger(HitWindowOpened { caster, skill_id: cast.skill_id.clone(), window_id: win.id.clone(), hitbox: hitbox_entity });
+            }
+        }
+
+        // End the cast.
+        if cast.phase == SkillPhase::Done {
+            commands.entity(caster).remove::<ActiveCast>();
+        }
+        let _ = &registry; // kept for future use_conditions re-checks
+    }
+}
+
+/// Despawn hitboxes whose active window elapsed.
+pub fn expire_hitboxes(mut commands: Commands, time: Res<Time<Fixed>>, mut q: Query<(Entity, &mut Hitbox)>) {
+    let dt = time.delta_secs();
+    for (e, mut hb) in &mut q {
+        hb.remaining -= dt;
+        if hb.remaining <= 0.0 { commands.entity(e).despawn(); }
     }
 }
