@@ -10,7 +10,7 @@ use bevy::prelude::*;
 pub fn detect_overlaps(
     mut commands: Commands,
     mut hitboxes: Query<(&mut Hitbox, &Transform)>,
-    hurtboxes: Query<(Entity, &Hurtbox)>,
+    hurtboxes: Query<(Entity, &Hurtbox, &Transform)>,
     factions: Query<&Faction>,
     spatial: SpatialQuery,
 ) {
@@ -28,12 +28,24 @@ pub fn detect_overlaps(
             .copied()
             .unwrap_or(Faction::Neutral);
         for hurt_e in hits {
-            let Ok((owner_e, hurt)) = hurtboxes.get(hurt_e) else {
+            let Ok((owner_e, hurt, hurt_tf)) = hurtboxes.get(hurt_e) else {
                 continue;
             };
             let target = hurt.owner;
             if target == hitbox.caster {
                 continue;
+            }
+            if let crate::assets::CollisionShape::Cone { angle, range } = hitbox.shape {
+                let half = angle.to_radians() * 0.5;
+                if !crate::spatial::cone::point_in_cone(
+                    hb_tf.translation,
+                    hitbox.aim,
+                    half,
+                    range,
+                    hurt_tf.translation,
+                ) {
+                    continue;
+                }
             }
             if !hitbox.can_hit(target) {
                 continue;

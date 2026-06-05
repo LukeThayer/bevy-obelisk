@@ -1,4 +1,5 @@
 pub mod boxes;
+pub mod cone;
 pub mod detect; // Task 14
 pub mod projectile;
 pub mod shapes; // Task 15
