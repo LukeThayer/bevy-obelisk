@@ -68,11 +68,58 @@
 //! - `app.finish(); app.cleanup();` MUST be called before the first `app.update()` when
 //!   constructing an `App` manually; `run()` does this internally but `update()` does not.
 
-pub mod assets;
-pub mod combat;
-pub mod core;
+use bevy::prelude::*;
+use bevy::app::{PluginGroup, PluginGroupBuilder};
+
 pub mod events;
 pub mod ids;
-
+pub mod core;
+pub mod assets;
 pub mod spatial;
 pub mod timeline;
+pub mod combat;
+pub mod prelude;
+#[cfg(feature = "present")]
+pub mod present;
+#[cfg(feature = "test-support")]
+pub mod testkit;
+
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ObeliskSet { Validate, Advance, SpawnVolumes, Projectiles, ResolveHits, TickEffects }
+
+/// The headless authoritative simulation: core + assets + spatial + timeline + combat.
+pub struct ObeliskSimPlugin;
+impl Plugin for ObeliskSimPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(assets::ObeliskAssetsPlugin)
+           .add_plugins(spatial::ObeliskSpatialPlugin)
+           .add_plugins(core::ObeliskCorePlugin)
+           .add_plugins(combat::ObeliskCombatPlugin);
+
+        app.configure_sets(FixedUpdate, (
+            ObeliskSet::Validate,
+            ObeliskSet::Advance,
+            ObeliskSet::Projectiles,
+            ObeliskSet::ResolveHits,
+            ObeliskSet::TickEffects,
+        ).chain());
+
+        app.add_systems(FixedUpdate, (
+            timeline::advance::validate_casts.in_set(ObeliskSet::Validate),
+            (timeline::advance::advance_casts, timeline::advance::expire_hitboxes).in_set(ObeliskSet::Advance),
+            spatial::projectile::move_projectiles.in_set(ObeliskSet::Projectiles),
+            spatial::detect::detect_overlaps.in_set(ObeliskSet::ResolveHits),
+        ));
+    }
+}
+
+/// Umbrella plugin group.
+pub struct ObeliskPlugins;
+impl PluginGroup for ObeliskPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        let mut b = PluginGroupBuilder::start::<Self>().add(ObeliskSimPlugin);
+        #[cfg(feature = "present")]
+        { b = b.add(present::ObeliskPresentPlugin); }
+        b
+    }
+}
