@@ -68,6 +68,7 @@
 //! - `app.finish(); app.cleanup();` MUST be called before the first `app.update()` when
 //!   constructing an `App` manually; `run()` does this internally but `update()` does not.
 
+pub mod assets;
 pub mod combat;
 pub mod core;
 pub mod events;
