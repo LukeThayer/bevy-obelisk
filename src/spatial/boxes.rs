@@ -43,9 +43,7 @@ impl Hitbox {
             HitMode::EveryTick => true,
             HitMode::FirstOnly | HitMode::OncePerTarget => match self.hit_log.get(&target) {
                 None => true,
-                Some(&last) => self
-                    .rehit_interval
-                    .map_or(false, |i| self.age - last >= i),
+                Some(&last) => self.rehit_interval.is_some_and(|i| self.age - last >= i),
             },
         }
     }

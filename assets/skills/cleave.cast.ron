@@ -1,0 +1,11 @@
+(
+  skill_id: "cleave",
+  phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+  collision_windows: [
+    ( id: "arc", spawn_phase: Active, spawn_offset: 0.0, active_duration: 0.1,
+      shape: Cone( angle: 120.0, range: 3.0 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+  targeting: Cone( angle: 120.0, range: 3.0 ),
+  delivery: Melee,
+)

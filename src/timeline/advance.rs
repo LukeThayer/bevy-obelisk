@@ -4,9 +4,9 @@ use crate::core::config::SkillRegistry;
 use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, HitWindowOpened};
 use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
-use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use crate::timeline::cast::{CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
+use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
 
 /// The max cast range for a targeting mode, if it gates on range. `None` = no range gate.
@@ -20,6 +20,7 @@ pub fn targeting_range(targeting: &CastTargeting) -> Option<f32> {
 }
 
 /// Validate pending casts: skill known? timeline loaded? mana/conditions ok? Then insert ActiveCast.
+#[allow(clippy::too_many_arguments)]
 pub fn validate_casts(
     mut commands: Commands,
     pending: Query<(Entity, &PendingCast)>,
@@ -71,7 +72,10 @@ pub fn validate_casts(
         }
 
         // Resolve the aim to a facing direction.
-        let caster_pos = transforms.get(caster).map(|t| t.translation).unwrap_or(Vec3::ZERO);
+        let caster_pos = transforms
+            .get(caster)
+            .map(|t| t.translation)
+            .unwrap_or(Vec3::ZERO);
         let (aim_dir, target) = match req.aim {
             CastAim::Entity(e) => {
                 let Ok(tf) = transforms.get(e) else {
@@ -88,7 +92,11 @@ pub fn validate_casts(
             CastAim::Point(p) => ((p - caster_pos).normalize_or_zero(), None),
             CastAim::Direction(d) => (d.as_vec3(), None),
         };
-        let aim_dir = if aim_dir == Vec3::ZERO { Vec3::Z } else { aim_dir };
+        let aim_dir = if aim_dir == Vec3::ZERO {
+            Vec3::Z
+        } else {
+            aim_dir
+        };
 
         if let Some(max_range) = targeting_range(&timeline.targeting) {
             let aim_point = match req.aim {
@@ -272,10 +280,19 @@ mod tests {
     }
     #[test]
     fn single_entity_range_is_extracted() {
-        assert_eq!(targeting_range(&CastTargeting::SingleEntity { range: 12.0 }), Some(12.0));
+        assert_eq!(
+            targeting_range(&CastTargeting::SingleEntity { range: 12.0 }),
+            Some(12.0)
+        );
     }
     #[test]
     fn cone_range_is_extracted() {
-        assert_eq!(targeting_range(&CastTargeting::Cone { angle: 90.0, range: 4.0 }), Some(4.0));
+        assert_eq!(
+            targeting_range(&CastTargeting::Cone {
+                angle: 90.0,
+                range: 4.0
+            }),
+            Some(4.0)
+        );
     }
 }
