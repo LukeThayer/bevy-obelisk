@@ -73,5 +73,4 @@ pub mod core;
 pub mod events;
 pub mod ids;
 
-// TEMPORARY stub — Task 9 replaces this with the real timeline module.
-pub mod timeline { #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum SkillPhase { Windup, Active, Recovery, Done } }
+pub mod timeline;
