@@ -4,7 +4,7 @@ use crate::core::config::SkillRegistry;
 use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, HitWindowOpened};
 use crate::spatial::boxes::Hitbox;
 use crate::spatial::projectile::Projectile;
-use crate::timeline::cast::PendingCast;
+use crate::timeline::cast::{CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
 use bevy::prelude::*;
 
@@ -16,6 +16,7 @@ pub fn validate_casts(
     registry: Res<SkillRegistry>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
+    transforms: Query<&Transform>,
 ) {
     for (caster, req) in &pending {
         commands.entity(caster).remove::<PendingCast>();
@@ -56,6 +57,26 @@ pub fn validate_casts(
             continue;
         }
 
+        // Resolve the aim to a facing direction.
+        let caster_pos = transforms.get(caster).map(|t| t.translation).unwrap_or(Vec3::ZERO);
+        let (aim_dir, target) = match req.aim {
+            CastAim::Entity(e) => {
+                let Ok(tf) = transforms.get(e) else {
+                    commands.trigger(CastRejected {
+                        caster,
+                        skill_id: req.skill_id.clone(),
+                        reason: CastRejectReason::NoTarget,
+                    });
+                    continue;
+                };
+                let delta = tf.translation - caster_pos;
+                (delta.normalize_or_zero(), Some(e))
+            }
+            CastAim::Point(p) => ((p - caster_pos).normalize_or_zero(), None),
+            CastAim::Direction(d) => (d.as_vec3(), None),
+        };
+        let aim_dir = if aim_dir == Vec3::ZERO { Vec3::Z } else { aim_dir };
+
         // Speed-scale the authored phase durations at cast start.
         let rate = effective_rate(&attrs.0, skill);
         let base = (
@@ -67,7 +88,8 @@ pub fn validate_casts(
 
         commands.entity(caster).insert(ActiveCast {
             skill_id: req.skill_id.clone(),
-            target: req.target,
+            target,
+            aim_dir,
             phase: SkillPhase::Windup,
             elapsed: 0.0,
             windup,
@@ -127,7 +149,8 @@ pub fn advance_casts(
             let start = base + win.spawn_offset;
             if prev_elapsed < start && cast.elapsed >= start {
                 cast.fired_windows.push(win.id.clone());
-                let dir = Vec3::Z; // replaced by resolved aim in a later task
+                let dir = cast.aim_dir;
+                let rot = Quat::from_rotation_arc(Vec3::Z, dir);
                 let mut ent = commands.spawn((
                     Hitbox {
                         caster,
@@ -143,7 +166,7 @@ pub fn advance_casts(
                         hit_log: std::collections::HashMap::new(),
                         done: false,
                     },
-                    Transform::from_translation(caster_tf.translation),
+                    Transform::from_translation(caster_tf.translation).with_rotation(rot),
                 ));
                 if let VolumeMotion::Linear { speed } = win.motion {
                     ent.insert(Projectile {

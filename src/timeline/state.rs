@@ -13,7 +13,10 @@ pub enum SkillPhase {
 #[derive(Component, Debug)]
 pub struct ActiveCast {
     pub skill_id: String,
-    pub target: Entity,
+    /// The aimed target entity, if any (for reference / future single-target rules).
+    pub target: Option<Entity>,
+    /// Resolved, normalized facing direction (projectile heading / cone axis).
+    pub aim_dir: Vec3,
     pub phase: SkillPhase,
     pub elapsed: f32,
     /// Effective phase durations (seconds), already divided by the caster's speed rate.
