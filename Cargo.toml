@@ -8,6 +8,8 @@ license = "MIT"
 default = ["present"]
 present = []
 test-support = []
+# Render-dependent Avian collider gizmos in the present layer. Opt-in; needs a render backend.
+debug-gizmos = ["present"]
 
 [dependencies]
 bevy = "0.17"

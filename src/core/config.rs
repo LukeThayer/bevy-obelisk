@@ -13,6 +13,14 @@ pub struct SkillRegistry(pub HashMap<String, Skill>);
 #[derive(Resource)]
 pub struct CombatRng(pub ChaCha8Rng);
 
+impl Default for CombatRng {
+    /// Deterministic seed-0 default so combat never panics on a missing resource.
+    /// Consumers should override it via `App::seed_combat_rng` for a real seed.
+    fn default() -> Self {
+        CombatRng(ChaCha8Rng::seed_from_u64(0))
+    }
+}
+
 /// Where skill rules come from.
 pub enum SkillSource {
     Dir(PathBuf),
