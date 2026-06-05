@@ -74,4 +74,5 @@ pub mod core;
 pub mod events;
 pub mod ids;
 
+pub mod spatial;
 pub mod timeline;
