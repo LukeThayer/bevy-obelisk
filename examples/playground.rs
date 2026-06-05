@@ -13,8 +13,8 @@ use stat_core::StatBlock;
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
-       .add_plugins(ObeliskPlugins)
-       .insert_resource(Time::<Fixed>::from_hz(60.0));
+        .add_plugins(ObeliskPlugins)
+        .insert_resource(Time::<Fixed>::from_hz(60.0));
 
     app.add_obelisk_config_constants_default();
     if !stat_core::config::effect_registry_initialized() {
@@ -41,10 +41,9 @@ fn setup(
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     // DefaultPlugins sets AssetPlugin::file_path = "assets", so paths are relative to that.
-    handles.0.insert(
-        "firebolt".into(),
-        assets.load("skills/firebolt.cast.ron"),
-    );
+    handles
+        .0
+        .insert("firebolt".into(), assets.load("skills/firebolt.cast.ron"));
 
     // Camera
     commands.spawn((
@@ -96,11 +95,7 @@ fn setup(
     commands.insert_resource(Players { player, dummy });
 }
 
-fn cast_on_space(
-    keys: Res<ButtonInput<KeyCode>>,
-    players: Res<Players>,
-    mut commands: Commands,
-) {
+fn cast_on_space(keys: Res<ButtonInput<KeyCode>>, players: Res<Players>, mut commands: Commands) {
     if keys.just_pressed(KeyCode::Space) {
         commands
             .entity(players.player)

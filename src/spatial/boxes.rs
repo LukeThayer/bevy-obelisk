@@ -1,10 +1,12 @@
-use bevy::prelude::*;
-use avian3d::prelude::*;
 use crate::assets::{HitFilter, HitMode};
+use avian3d::prelude::*;
+use bevy::prelude::*;
 
 /// Defensive volume on a combatant. Spawned as a static Avian collider so SpatialQuery can find it.
 #[derive(Component, Debug)]
-pub struct Hurtbox { pub owner: Entity }
+pub struct Hurtbox {
+    pub owner: Entity,
+}
 
 /// Offensive volume spawned during an active collision window.
 #[derive(Component, Debug)]

@@ -3,15 +3,18 @@ pub mod config;
 pub mod tick;
 pub use components::{Attributes, Combatant, Faction, SkillSlots};
 
-use bevy::prelude::*;
 use crate::ids::{sync_index_added, sync_index_removed, ObeliskEntityIndex};
 use crate::ObeliskSet;
+use bevy::prelude::*;
 
 pub struct ObeliskCorePlugin;
 impl Plugin for ObeliskCorePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ObeliskEntityIndex>()
-           .add_systems(Update, (sync_index_added, sync_index_removed))
-           .add_systems(FixedUpdate, tick::tick_effects_system.in_set(ObeliskSet::TickEffects));
+            .add_systems(Update, (sync_index_added, sync_index_removed))
+            .add_systems(
+                FixedUpdate,
+                tick::tick_effects_system.in_set(ObeliskSet::TickEffects),
+            );
     }
 }

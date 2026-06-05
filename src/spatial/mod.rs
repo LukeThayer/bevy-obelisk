@@ -1,7 +1,7 @@
-pub mod shapes;
 pub mod boxes;
-pub mod detect;     // Task 14
-pub mod projectile; // Task 15
+pub mod detect; // Task 14
+pub mod projectile;
+pub mod shapes; // Task 15
 pub use boxes::{Hitbox, Hurtbox};
 
 use bevy::prelude::*;

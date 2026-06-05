@@ -2,7 +2,9 @@ use bevy::prelude::*;
 
 /// Straight-line projectile motion for a moving hitbox. World-space speed (NOT speed-scaled).
 #[derive(Component, Debug)]
-pub struct Projectile { pub velocity: Vec3 }
+pub struct Projectile {
+    pub velocity: Vec3,
+}
 
 /// Integrate projectile transforms each fixed step. Runs before ResolveHits so detection
 /// uses the updated position.

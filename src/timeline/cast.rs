@@ -2,7 +2,10 @@ use bevy::prelude::*;
 
 /// Pending cast request, consumed by the Validate system.
 #[derive(Component, Debug)]
-pub struct PendingCast { pub skill_id: String, pub target: Entity }
+pub struct PendingCast {
+    pub skill_id: String,
+    pub target: Entity,
+}
 
 /// EntityCommands verb: request a cast at a target entity.
 pub trait CastSkillExt {

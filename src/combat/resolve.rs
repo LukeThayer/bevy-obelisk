@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use rand_chacha::ChaCha8Rng;
-use rand::SeedableRng;
-use stat_core::{Skill, SkillUseError, Effect};
-use stat_core::StatBlock;
 use stat_core::combat::resolve_damage_with_triggers;
+use stat_core::StatBlock;
+use stat_core::{Effect, Skill, SkillUseError};
+use std::collections::HashMap;
 
 /// Outcome of resolving one hit, projected from obelisk's CombatResults.
 #[derive(Debug, Clone)]
@@ -25,24 +24,36 @@ pub fn resolve_one_hit(
     let source_id = caster.id.clone();
     // use_skill_against needs &mut caster + &target simultaneously: snapshot the target.
     let target_snapshot = target.clone();
-    let skill_result = caster.use_skill_against(Some(&target_snapshot), skill, registry, source_id, rng)?;
+    let skill_result =
+        caster.use_skill_against(Some(&target_snapshot), skill, registry, source_id, rng)?;
 
     // Resolve the produced packets against the live target (deterministic, seeded).
-    let tr = resolve_damage_with_triggers(caster, target, &skill_result.packets, skill, registry, rng);
+    let tr =
+        resolve_damage_with_triggers(caster, target, &skill_result.packets, skill, registry, rng);
 
     let total_damage: f64 = tr.results.iter().map(|r| r.total_damage).sum();
     let is_killing_blow = tr.results.iter().any(|r| r.is_killing_blow);
-    let effects_applied: Vec<Effect> = tr.results.iter().flat_map(|r| r.effects_applied.clone()).collect();
+    let effects_applied: Vec<Effect> = tr
+        .results
+        .iter()
+        .flat_map(|r| r.effects_applied.clone())
+        .collect();
 
     // Write the mutated defender back into the caller's target.
     *target = tr.defender;
 
-    Ok(HitOutcome { total_damage, is_killing_blow, effects_applied, mana_spent: skill_result.mana_spent })
+    Ok(HitOutcome {
+        total_damage,
+        is_killing_blow,
+        effects_applied,
+        mana_spent: skill_result.mana_spent,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
     use stat_core::StatBlock;
 
     fn firebolt_registry() -> HashMap<String, Skill> {
@@ -67,16 +78,22 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
         let skill = registry.get("firebolt").unwrap();
 
         let mut caster = StatBlock::with_id("player");
-        caster.max_mana.base = 100.0; caster.current_mana = 100.0;
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
 
         let mut target = StatBlock::with_id("dummy");
-        target.max_life.base = 50.0; target.current_life = 50.0;
+        target.max_life.base = 50.0;
+        target.current_life = 50.0;
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let outcome = resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
 
         assert!(outcome.total_damage > 0.0, "should deal damage");
-        assert!(target.current_life < 50.0, "target should have taken damage");
+        assert!(
+            target.current_life < 50.0,
+            "target should have taken damage"
+        );
         assert_eq!(caster.current_mana, 95.0, "5 mana spent");
         assert_eq!(outcome.mana_spent, 5.0);
     }
@@ -87,10 +104,16 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
         let registry = firebolt_registry();
         let skill = registry.get("firebolt").unwrap();
         let run = || {
-            let mut c = StatBlock::with_id("p"); c.max_mana.base = 100.0; c.current_mana = 100.0;
-            let mut t = StatBlock::with_id("d"); t.max_life.base = 50.0; t.current_life = 50.0;
+            let mut c = StatBlock::with_id("p");
+            c.max_mana.base = 100.0;
+            c.current_mana = 100.0;
+            let mut t = StatBlock::with_id("d");
+            t.max_life.base = 50.0;
+            t.current_life = 50.0;
             let mut rng = ChaCha8Rng::seed_from_u64(7);
-            resolve_one_hit(&mut c, &mut t, skill, &registry, &mut rng).unwrap().total_damage
+            resolve_one_hit(&mut c, &mut t, skill, &registry, &mut rng)
+                .unwrap()
+                .total_damage
         };
         assert_eq!(run(), run(), "same seed must produce identical damage");
     }
@@ -101,19 +124,35 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
         if !stat_core::config::effect_registry_initialized() {
             let _ = stat_core::init_effect_registry(std::path::Path::new("tests/fixtures/effects"));
         }
-        let registry = stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills")).unwrap();
+        let registry =
+            stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills"))
+                .unwrap();
         let skill = registry.get("firebolt").unwrap();
 
-        let mut caster = StatBlock::with_id("player"); caster.max_mana.base = 100.0; caster.current_mana = 100.0;
-        let mut target = StatBlock::with_id("dummy"); target.max_life.base = 500.0; target.current_life = 500.0;
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 500.0;
+        target.current_life = 500.0;
 
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        let outcome = resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
-        assert!(outcome.effects_applied.iter().any(|e| e.id == "burn"), "burn should be applied");
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+        assert!(
+            outcome.effects_applied.iter().any(|e| e.id == "burn"),
+            "burn should be applied"
+        );
 
         // Tick 1 second of DoT (immutable API returns a new block).
         let (ticked, tick_result) = target.tick_effects(1.0);
-        assert!(tick_result.dot_damage > 0.0, "burn should deal DoT this tick");
-        assert!(ticked.current_life < target.current_life, "DoT should reduce life");
+        assert!(
+            tick_result.dot_damage > 0.0,
+            "burn should deal DoT this tick"
+        );
+        assert!(
+            ticked.current_life < target.current_life,
+            "DoT should reduce life"
+        );
     }
 }

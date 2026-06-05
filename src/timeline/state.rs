@@ -2,7 +2,12 @@ use bevy::prelude::*;
 use stat_core::{Skill, StatBlock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SkillPhase { Windup, Active, Recovery, Done }
+pub enum SkillPhase {
+    Windup,
+    Active,
+    Recovery,
+    Done,
+}
 
 /// Per-cast runtime state. Effective (speed-scaled) durations are snapshotted at cast start.
 #[derive(Component, Debug)]
@@ -20,13 +25,20 @@ pub struct ActiveCast {
 }
 
 impl ActiveCast {
-    pub fn total_duration(&self) -> f32 { self.windup + self.active + self.recovery }
+    pub fn total_duration(&self) -> f32 {
+        self.windup + self.active + self.recovery
+    }
     /// Which phase a given elapsed time falls in.
     pub fn phase_at(&self, t: f32) -> SkillPhase {
-        if t < self.windup { SkillPhase::Windup }
-        else if t < self.windup + self.active { SkillPhase::Active }
-        else if t < self.total_duration() { SkillPhase::Recovery }
-        else { SkillPhase::Done }
+        if t < self.windup {
+            SkillPhase::Windup
+        } else if t < self.windup + self.active {
+            SkillPhase::Active
+        } else if t < self.total_duration() {
+            SkillPhase::Recovery
+        } else {
+            SkillPhase::Done
+        }
     }
 }
 
@@ -55,7 +67,8 @@ mod tests {
     use stat_core::{Skill, StatBlock};
 
     fn spell(asm: f64) -> Skill {
-        let toml = format!(r#"
+        let toml = format!(
+            r#"
 [[skills]]
 id = "s"
 name = "TestSpell"
@@ -64,8 +77,12 @@ targeting = "single_enemy"
 delivery = "instant"
 attack_speed_modifier = {asm}
 [skills.damage]
-"#);
-        stat_core::config::parse_skills(&toml).unwrap().remove("s").unwrap()
+"#
+        );
+        stat_core::config::parse_skills(&toml)
+            .unwrap()
+            .remove("s")
+            .unwrap()
     }
 
     #[test]
@@ -93,8 +110,14 @@ delivery = "melee"
 attack_speed_modifier = 0.8
 [skills.damage]
 "#;
-        let atk = stat_core::config::parse_skills(attack_toml).unwrap().remove("a").unwrap();
+        let atk = stat_core::config::parse_skills(attack_toml)
+            .unwrap()
+            .remove("a")
+            .unwrap();
         let rate = effective_rate(&caster, &atk);
-        assert!((rate - 0.8).abs() < 1e-6, "rate = base(1.0) * modifier(0.8)");
+        assert!(
+            (rate - 0.8).abs() < 1e-6,
+            "rate = base(1.0) * modifier(0.8)"
+        );
     }
 }

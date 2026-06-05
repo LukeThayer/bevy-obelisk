@@ -28,7 +28,7 @@
 //! ## (C) Time<Fixed> fixed delta accessors
 //! - `time.delta_secs() -> f32`  (= 1/60 ≈ 0.016666668 at 60 Hz)
 //! - `time.delta_secs_f64() -> f64` (= 0.016666667)
-//! Both confirmed to compile and return correct values.
+//!   Both confirmed to compile and return correct values.
 //! ```rust,ignore
 //! fn fixed_sys(time: Res<Time<Fixed>>) {
 //!     let _f32: f32 = time.delta_secs();
@@ -68,48 +68,66 @@
 //! - `app.finish(); app.cleanup();` MUST be called before the first `app.update()` when
 //!   constructing an `App` manually; `run()` does this internally but `update()` does not.
 
-use bevy::prelude::*;
 use bevy::app::{PluginGroup, PluginGroupBuilder};
+use bevy::prelude::*;
 
+pub mod assets;
+pub mod combat;
+pub mod core;
 pub mod events;
 pub mod ids;
-pub mod core;
-pub mod assets;
-pub mod spatial;
-pub mod timeline;
-pub mod combat;
 pub mod prelude;
 #[cfg(feature = "present")]
 pub mod present;
+pub mod spatial;
 #[cfg(feature = "test-support")]
 pub mod testkit;
+pub mod timeline;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ObeliskSet { Validate, Advance, SpawnVolumes, Projectiles, ResolveHits, TickEffects }
+pub enum ObeliskSet {
+    Validate,
+    Advance,
+    SpawnVolumes,
+    Projectiles,
+    ResolveHits,
+    TickEffects,
+}
 
 /// The headless authoritative simulation: core + assets + spatial + timeline + combat.
 pub struct ObeliskSimPlugin;
 impl Plugin for ObeliskSimPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(assets::ObeliskAssetsPlugin)
-           .add_plugins(spatial::ObeliskSpatialPlugin)
-           .add_plugins(core::ObeliskCorePlugin)
-           .add_plugins(combat::ObeliskCombatPlugin);
+            .add_plugins(spatial::ObeliskSpatialPlugin)
+            .add_plugins(core::ObeliskCorePlugin)
+            .add_plugins(combat::ObeliskCombatPlugin);
 
-        app.configure_sets(FixedUpdate, (
-            ObeliskSet::Validate,
-            ObeliskSet::Advance,
-            ObeliskSet::Projectiles,
-            ObeliskSet::ResolveHits,
-            ObeliskSet::TickEffects,
-        ).chain());
+        app.configure_sets(
+            FixedUpdate,
+            (
+                ObeliskSet::Validate,
+                ObeliskSet::Advance,
+                ObeliskSet::Projectiles,
+                ObeliskSet::ResolveHits,
+                ObeliskSet::TickEffects,
+            )
+                .chain(),
+        );
 
-        app.add_systems(FixedUpdate, (
-            timeline::advance::validate_casts.in_set(ObeliskSet::Validate),
-            (timeline::advance::advance_casts, timeline::advance::expire_hitboxes).in_set(ObeliskSet::Advance),
-            spatial::projectile::move_projectiles.in_set(ObeliskSet::Projectiles),
-            spatial::detect::detect_overlaps.in_set(ObeliskSet::ResolveHits),
-        ));
+        app.add_systems(
+            FixedUpdate,
+            (
+                timeline::advance::validate_casts.in_set(ObeliskSet::Validate),
+                (
+                    timeline::advance::advance_casts,
+                    timeline::advance::expire_hitboxes,
+                )
+                    .in_set(ObeliskSet::Advance),
+                spatial::projectile::move_projectiles.in_set(ObeliskSet::Projectiles),
+                spatial::detect::detect_overlaps.in_set(ObeliskSet::ResolveHits),
+            ),
+        );
     }
 }
 
@@ -119,7 +137,9 @@ impl PluginGroup for ObeliskPlugins {
     fn build(self) -> PluginGroupBuilder {
         let mut b = PluginGroupBuilder::start::<Self>().add(ObeliskSimPlugin);
         #[cfg(feature = "present")]
-        { b = b.add(present::ObeliskPresentPlugin); }
+        {
+            b = b.add(present::ObeliskPresentPlugin);
+        }
         b
     }
 }

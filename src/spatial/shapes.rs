@@ -1,5 +1,5 @@
-use avian3d::prelude::Collider;
 use crate::assets::CollisionShape;
+use avian3d::prelude::Collider;
 
 /// Convert an authoring shape to an Avian collider. (Cone approximated by a sphere for the
 /// slice; a true cone/sector test is future work.)

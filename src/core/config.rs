@@ -1,9 +1,9 @@
 use bevy::prelude::*;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+use stat_core::Skill;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use rand_chacha::ChaCha8Rng;
-use rand::SeedableRng;
-use stat_core::Skill;
 
 /// Registry of obelisk skills (the REAL Skill type, not DamagePacketGenerator).
 #[derive(Resource, Default)]
@@ -14,7 +14,10 @@ pub struct SkillRegistry(pub HashMap<String, Skill>);
 pub struct CombatRng(pub ChaCha8Rng);
 
 /// Where skill rules come from.
-pub enum SkillSource { Dir(PathBuf), Toml(String) }
+pub enum SkillSource {
+    Dir(PathBuf),
+    Toml(String),
+}
 
 /// App-builder verbs for obelisk setup. All global init is GUARDED (idempotent) because
 /// obelisk's `init_*` panic on a second call — critical for tests and in-process client+server.
@@ -80,7 +83,11 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
         app.add_obelisk_skills(SkillSource::Toml(toml.into()));
         app.seed_combat_rng(42);
 
-        assert!(app.world().resource::<SkillRegistry>().0.contains_key("firebolt"));
+        assert!(app
+            .world()
+            .resource::<SkillRegistry>()
+            .0
+            .contains_key("firebolt"));
         assert!(app.world().get_resource::<CombatRng>().is_some());
         assert!(stat_core::config::constants_initialized());
     }

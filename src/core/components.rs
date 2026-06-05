@@ -6,13 +6,19 @@ use stat_core::StatBlock;
 pub struct Attributes(pub StatBlock);
 
 impl Default for Attributes {
-    fn default() -> Self { Attributes(StatBlock::new()) }
+    fn default() -> Self {
+        Attributes(StatBlock::new())
+    }
 }
 
 /// Team / faction for hit filtering.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Faction { Player, Enemy, Neutral }
-impl Default for Faction { fn default() -> Self { Faction::Neutral } }
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Faction {
+    Player,
+    Enemy,
+    #[default]
+    Neutral,
+}
 
 /// Skill ids this entity can cast.
 #[derive(Component, Clone, Debug, Default)]
@@ -27,5 +33,7 @@ pub struct Combatant;
 
 impl Attributes {
     /// True if the StatBlock has no active effects (skip tick clone).
-    pub fn effects_is_empty_fast(&self) -> bool { self.0.effects.is_empty() }
+    pub fn effects_is_empty_fast(&self) -> bool {
+        self.0.effects.is_empty()
+    }
 }
