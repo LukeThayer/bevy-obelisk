@@ -32,9 +32,6 @@ pub fn detect_overlaps(
                 continue;
             };
             let target = hurt.owner;
-            if target == hitbox.caster {
-                continue;
-            }
             if let crate::assets::CollisionShape::Cone { angle, range } = hitbox.shape {
                 let half = angle.to_radians() * 0.5;
                 if !crate::spatial::cone::point_in_cone(
@@ -51,10 +48,14 @@ pub fn detect_overlaps(
                 continue;
             }
 
-            // Faction filter (HitFilter::Enemies for the slice).
             let target_faction = factions.get(target).copied().unwrap_or(Faction::Neutral);
-            let is_enemy = target_faction != caster_faction;
-            if !is_enemy {
+            let is_self = target == hitbox.caster;
+            if !crate::spatial::filter::passes_filter(
+                hitbox.filter,
+                caster_faction,
+                target_faction,
+                is_self,
+            ) {
                 continue;
             }
 
