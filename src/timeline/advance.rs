@@ -1,4 +1,4 @@
-use crate::assets::{CastTimeline, CastTimelineHandles, VolumeMotion, WindowPhase};
+use crate::assets::{CastTargeting, CastTimeline, CastTimelineHandles, VolumeMotion, WindowPhase};
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
 use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, HitWindowOpened};
@@ -7,6 +7,16 @@ use crate::spatial::projectile::Projectile;
 use crate::timeline::cast::{CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
 use bevy::prelude::*;
+
+/// The max cast range for a targeting mode, if it gates on range. `None` = no range gate.
+pub fn targeting_range(targeting: &CastTargeting) -> Option<f32> {
+    match targeting {
+        CastTargeting::SelfCast => None,
+        CastTargeting::SingleEntity { range }
+        | CastTargeting::Direction { range }
+        | CastTargeting::Cone { range, .. } => Some(*range),
+    }
+}
 
 /// Validate pending casts: skill known? timeline loaded? mana/conditions ok? Then insert ActiveCast.
 pub fn validate_casts(
@@ -76,6 +86,24 @@ pub fn validate_casts(
             CastAim::Direction(d) => (d.as_vec3(), None),
         };
         let aim_dir = if aim_dir == Vec3::ZERO { Vec3::Z } else { aim_dir };
+
+        if let Some(max_range) = targeting_range(&timeline.targeting) {
+            let aim_point = match req.aim {
+                CastAim::Entity(e) => transforms.get(e).ok().map(|t| t.translation),
+                CastAim::Point(p) => Some(p),
+                CastAim::Direction(_) => None, // no distance to gate on
+            };
+            if let Some(point) = aim_point {
+                if point.distance(caster_pos) > max_range {
+                    commands.trigger(CastRejected {
+                        caster,
+                        skill_id: req.skill_id.clone(),
+                        reason: CastRejectReason::OutOfRange,
+                    });
+                    continue;
+                }
+            }
+        }
 
         // Speed-scale the authored phase durations at cast start.
         let rate = effective_rate(&attrs.0, skill);
@@ -204,5 +232,24 @@ pub fn expire_hitboxes(
         if hb.remaining <= 0.0 {
             commands.entity(e).despawn();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::CastTargeting;
+
+    #[test]
+    fn self_cast_has_no_range_gate() {
+        assert_eq!(targeting_range(&CastTargeting::SelfCast), None);
+    }
+    #[test]
+    fn single_entity_range_is_extracted() {
+        assert_eq!(targeting_range(&CastTargeting::SingleEntity { range: 12.0 }), Some(12.0));
+    }
+    #[test]
+    fn cone_range_is_extracted() {
+        assert_eq!(targeting_range(&CastTargeting::Cone { angle: 90.0, range: 4.0 }), Some(4.0));
     }
 }
