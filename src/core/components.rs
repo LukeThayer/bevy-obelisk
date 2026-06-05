@@ -24,3 +24,8 @@ pub struct SkillSlots(pub Vec<String>);
 #[derive(Component, Default)]
 #[require(Attributes, Faction, SkillSlots, crate::ids::ObeliskId, Transform)]
 pub struct Combatant;
+
+impl Attributes {
+    /// True if the StatBlock has no active effects (skip tick clone).
+    pub fn effects_is_empty_fast(&self) -> bool { self.0.effects.is_empty() }
+}
