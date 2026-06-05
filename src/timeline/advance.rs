@@ -176,6 +176,7 @@ pub fn expire_hitboxes(
 ) {
     let dt = time.delta_secs();
     for (e, mut hb) in &mut q {
+        hb.age += dt;
         hb.remaining -= dt;
         if hb.remaining <= 0.0 {
             commands.entity(e).despawn();
