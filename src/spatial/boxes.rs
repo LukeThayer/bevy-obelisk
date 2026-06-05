@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use avian3d::prelude::*;
 use crate::assets::{HitFilter, HitMode};
 
 /// Defensive volume on a combatant. Spawned as a static Avian collider so SpatialQuery can find it.
@@ -15,4 +16,16 @@ pub struct Hitbox {
     pub mode: HitMode,
     pub remaining: f32,
     pub already_hit: Vec<Entity>,
+}
+
+/// Bundle of components that make `owner` a SpatialQuery-discoverable hurtbox at `pos`.
+/// Uses `RigidBody::Static` because (per the probe) a static collider is included in
+/// `SpatialQuery` shape intersections.
+pub fn insert_hurtbox(commands: &mut Commands, owner: Entity, radius: f32, pos: Vec3) {
+    commands.entity(owner).insert((
+        Hurtbox { owner },
+        RigidBody::Static,
+        Collider::sphere(radius),
+        Transform::from_translation(pos),
+    ));
 }
