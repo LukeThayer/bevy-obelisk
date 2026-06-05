@@ -127,7 +127,7 @@ pub fn advance_casts(
             let start = base + win.spawn_offset;
             if prev_elapsed < start && cast.elapsed >= start {
                 cast.fired_windows.push(win.id.clone());
-                let dir = Vec3::Z; // slice: forward; future: aim at target position
+                let dir = Vec3::Z; // replaced by resolved aim in a later task
                 let mut ent = commands.spawn((
                     Hitbox {
                         caster,
@@ -135,8 +135,13 @@ pub fn advance_casts(
                         window_id: win.id.clone(),
                         filter: win.hit_filter,
                         mode: win.hit_mode,
+                        shape: win.shape,
+                        aim: dir,
+                        age: 0.0,
+                        rehit_interval: win.rehit_interval,
                         remaining: win.active_duration,
-                        already_hit: Vec::new(),
+                        hit_log: std::collections::HashMap::new(),
+                        done: false,
                     },
                     Transform::from_translation(caster_tf.translation),
                 ));

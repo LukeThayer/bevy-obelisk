@@ -31,6 +31,8 @@ pub struct CollisionWindow {
     pub motion: VolumeMotion,
     pub hit_filter: HitFilter,
     pub hit_mode: HitMode,
+    #[serde(default)]
+    pub rehit_interval: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -40,7 +42,7 @@ pub enum WindowPhase {
     Recovery,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub enum CollisionShape {
     Sphere { radius: f32 },
     Capsule { radius: f32, height: f32 },

@@ -15,7 +15,7 @@ pub fn detect_overlaps(
     spatial: SpatialQuery,
 ) {
     for (mut hitbox, hb_tf) in &mut hitboxes {
-        let collider = Collider::sphere(0.5); // slice: bolt radius; future: store the hitbox's own collider
+        let collider = crate::spatial::shapes::to_collider(&hitbox.shape);
         let hits = spatial.shape_intersections(
             &collider,
             hb_tf.translation,
@@ -35,7 +35,7 @@ pub fn detect_overlaps(
             if target == hitbox.caster {
                 continue;
             }
-            if hitbox.already_hit.contains(&target) {
+            if !hitbox.can_hit(target) {
                 continue;
             }
 
@@ -46,7 +46,7 @@ pub fn detect_overlaps(
                 continue;
             }
 
-            hitbox.already_hit.push(target);
+            hitbox.register_hit(target);
             commands.trigger(HitConfirmed {
                 caster: hitbox.caster,
                 target,
