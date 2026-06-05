@@ -29,6 +29,7 @@ What obelisk **does not** have, and this plugin must add: any spatial/3D concept
 | VFX consumption | **Events / observers only** — no built-in declarative timeline; the sim emits a rich event set |
 | Cast timing authority | **Obelisk owns the authoritative timeline** — fixed-timestep phase timers open/close hit windows and emit timing events that animation/VFX sync *to* |
 | Skill spatial/temporal data | **A new Bevy asset** (`CastTimelineAsset`, `.cast.ron`) that *references* an existing `stat_core::Skill` by id; forks nothing |
+| Skill authoring | **Two files, always.** obelisk `Skill` rules in `skills/*.toml` (existing format) + one `.cast.ron` per skill. **Every castable skill requires a `.cast.ron`** (uniform pipeline — no special-case for self-buffs; trivial skills use a minimal instant timeline). No single-file format and no Rust builder API in scope (YAGNI). |
 | Crate layout | **Single `obelisk-bevy` crate, modules only**; presentation behind a default-on `present` Cargo feature |
 | Public API vocabulary | **Obelisk-native names** (Skill, StatBlock/Attributes, Effect, SkillTag); GAS mapping lives in docs only |
 
@@ -81,7 +82,7 @@ obelisk-bevy/
 11. Cooldowns: a single `Cooldowns` source of truth keyed by `(Entity, skill_id)`, computed from `Skill::effective_cooldown(reduction)`. Emits `CooldownStarted` / `CooldownReady`.
 
 ### 3.2 Spatiotemporal skill / casting (`timeline/`)
-12. `CastTimelineAsset` (§7) — phases, collision/hurtbox windows, shapes, motion, targeting, range, delivery, vfx-cue ids. References a `Skill` id.
+12. `CastTimelineAsset` (§7) — phases, collision/hurtbox windows, shapes, motion, targeting, range, delivery, vfx-cue ids. References a `Skill` id. **Mandatory for every castable skill** — there is exactly one cast path; a self-buff/instant skill ships a minimal timeline (instant/zero-duration phases, no collision windows, `SelfCast`). `cast_*` fails with `CastRejectReason::TimelineMissing` if a skill has no loaded `.cast.ron`.
 13. `ActiveCast` component — authoritative cast state machine: handle, elapsed, `SkillPhase`, resolved targets, `fired_windows`. Driven by fixed-timestep timers.
 14. Phase timeline: crossing a phase boundary emits `CastPhaseChanged`; opening/closing a collision window spawns/despawns a `Hitbox` and emits `HitWindowOpened` / `HitWindowClosed`.
 15. "Use a skill" primitives — `cast_skill` / `cast_skill_at(Vec3)` / `cast_skill_dir(Dir3)` / `interrupt_cast` EntityCommands verbs → `CastRequested` → validation → `ActiveCast` or `CastRejected`.
@@ -216,6 +217,20 @@ This is *two-tier*: advanced consumers observe raw authoritative events; casual 
   vfx_cues: { on_cast: "firebolt_cast", on_window_bolt: "firebolt_launch", on_hit: "firebolt_impact" },
 )
 ```
+
+**Mandatory & uniform.** Every castable skill has exactly one `.cast.ron`; there is a single cast code path. A geometry-free skill (self-buff, instant utility) ships a minimal timeline — no boilerplate beyond a few lines:
+```ron
+(
+  skill_id: "iron_skin",                          // a SelfCast buff in skills.toml
+  phase_durations: (windup: 0.0, active: 0.0, recovery: 0.4),  // instant; recovery is lockout only
+  collision_windows: [],                          // no geometry
+  hurtbox_windows: [],
+  targeting: SelfCast,
+  delivery: Instant,
+  vfx_cues: { on_cast: "iron_skin_activate" },
+)
+```
+The load-time validator requires a `.cast.ron` for every skill that can be cast; `cast_*` on a skill with no loaded timeline fails with `CastRejectReason::TimelineMissing`.
 
 - **Division of authority:** the asset owns *when* a hit fires (deterministic fixed-timestep phase/window timing); obelisk owns *what* the hit does (damage/effects/triggers). obelisk has no timing fields, so the asset's `phase_durations` are the sole timing authority — a 0.3s windup on a rules-instant skill is legal and expected. Document this.
 - **Drive loop:** `ObeliskSet::Advance` adds `FixedTime` delta to `ActiveCast.elapsed`; phase crossings emit `CastPhaseChanged`. `SpawnVolumes` spawns an Avian Kinematic Sensor `Hitbox` when `elapsed` enters a window, with the converted collider + `CollisionLayers` filtered by `Faction`/`HitFilter`, emits `HitWindowOpened`, despawns after `active_duration`. `VolumeMotion` integrates the volume's transform each fixed step.
