@@ -94,4 +94,26 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
         };
         assert_eq!(run(), run(), "same seed must produce identical damage");
     }
+
+    #[test]
+    fn burn_is_applied_and_ticks_down_life() {
+        stat_core::config::ensure_constants_initialized();
+        if !stat_core::config::effect_registry_initialized() {
+            let _ = stat_core::init_effect_registry(std::path::Path::new("tests/fixtures/effects"));
+        }
+        let registry = stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills")).unwrap();
+        let skill = registry.get("firebolt").unwrap();
+
+        let mut caster = StatBlock::with_id("player"); caster.max_mana.base = 100.0; caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy"); target.max_life.base = 500.0; target.current_life = 500.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let outcome = resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+        assert!(outcome.effects_applied.iter().any(|e| e.id == "burn"), "burn should be applied");
+
+        // Tick 1 second of DoT (immutable API returns a new block).
+        let (ticked, tick_result) = target.tick_effects(1.0);
+        assert!(tick_result.dot_damage > 0.0, "burn should deal DoT this tick");
+        assert!(ticked.current_life < target.current_life, "DoT should reduce life");
+    }
 }
