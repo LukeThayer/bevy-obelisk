@@ -1,4 +1,46 @@
-// filled later
+use bevy::prelude::*;
+use avian3d::prelude::*;
+use crate::spatial::boxes::{Hitbox, Hurtbox};
+use crate::core::components::Faction;
+use crate::events::HitConfirmed;
+
+/// For each active hitbox, query overlapping hurtboxes via SpatialQuery, apply the
+/// faction filter + HitMode dedupe, and emit HitConfirmed. Detection is in FixedUpdate
+/// so it is deterministic and authoritative.
+pub fn detect_overlaps(
+    mut commands: Commands,
+    mut hitboxes: Query<(&mut Hitbox, &Transform)>,
+    hurtboxes: Query<(Entity, &Hurtbox)>,
+    factions: Query<&Faction>,
+    spatial: SpatialQuery,
+) {
+    for (mut hitbox, hb_tf) in &mut hitboxes {
+        let collider = Collider::sphere(0.5); // slice: bolt radius; future: store the hitbox's own collider
+        let hits = spatial.shape_intersections(&collider, hb_tf.translation, hb_tf.rotation, &SpatialQueryFilter::default());
+
+        let caster_faction = factions.get(hitbox.caster).copied().unwrap_or(Faction::Neutral);
+        for hurt_e in hits {
+            let Ok((owner_e, hurt)) = hurtboxes.get(hurt_e) else { continue };
+            let target = hurt.owner;
+            if target == hitbox.caster { continue; }
+            if hitbox.already_hit.contains(&target) { continue; }
+
+            // Faction filter (HitFilter::Enemies for the slice).
+            let target_faction = factions.get(target).copied().unwrap_or(Faction::Neutral);
+            let is_enemy = target_faction != caster_faction;
+            if !is_enemy { continue; }
+
+            hitbox.already_hit.push(target);
+            commands.trigger(HitConfirmed {
+                caster: hitbox.caster,
+                target,
+                skill_id: hitbox.skill_id.clone(),
+                window_id: hitbox.window_id.clone(),
+            });
+            let _ = owner_e;
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
