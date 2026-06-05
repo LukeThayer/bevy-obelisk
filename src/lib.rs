@@ -67,3 +67,8 @@
 //!   to make `FixedUpdate` accumulate deterministic time in tests.
 //! - `app.finish(); app.cleanup();` MUST be called before the first `app.update()` when
 //!   constructing an `App` manually; `run()` does this internally but `update()` does not.
+
+pub mod events;
+
+// TEMPORARY stub — Task 9 replaces this with the real timeline module.
+pub mod timeline { #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum SkillPhase { Windup, Active, Recovery, Done } }
