@@ -22,6 +22,7 @@ pub enum CastRejectReason {
     ConditionNotMet,
     OutOfRange,
     NoTarget,
+    NoLineOfSight,
 }
 
 #[derive(Event, Clone, Debug)]

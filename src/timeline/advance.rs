@@ -2,8 +2,9 @@ use crate::assets::{CastTargeting, CastTimeline, CastTimelineHandles, VolumeMoti
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
 use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, HitWindowOpened};
-use crate::spatial::boxes::Hitbox;
+use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
+use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use crate::timeline::cast::{CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
 use bevy::prelude::*;
@@ -27,6 +28,8 @@ pub fn validate_casts(
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
     transforms: Query<&Transform>,
+    spatial: SpatialQuery,
+    hurtboxes: Query<&Hurtbox>,
 ) {
     for (caster, req) in &pending {
         commands.entity(caster).remove::<PendingCast>();
@@ -101,6 +104,29 @@ pub fn validate_casts(
                         reason: CastRejectReason::OutOfRange,
                     });
                     continue;
+                }
+            }
+        }
+
+        // Line-of-sight check for entity-aimed casts (fail-open: no hit = clear).
+        if let CastAim::Entity(e) = req.aim {
+            if let Ok(tf) = transforms.get(e) {
+                let to_target = tf.translation - caster_pos;
+                let dist = to_target.length();
+                if dist > f32::EPSILON {
+                    let dir = Dir3::new(to_target).unwrap_or(Dir3::Z);
+                    let filter = SpatialQueryFilter::default().with_excluded_entities([caster]);
+                    if let Some(hit) = spatial.cast_ray(caster_pos, dir, dist, true, &filter) {
+                        let hit_is_target = hurtboxes.get(hit.entity).map(|h| h.owner) == Ok(e);
+                        if !hit_is_target {
+                            commands.trigger(CastRejected {
+                                caster,
+                                skill_id: req.skill_id.clone(),
+                                reason: CastRejectReason::NoLineOfSight,
+                            });
+                            continue;
+                        }
+                    }
                 }
             }
         }
