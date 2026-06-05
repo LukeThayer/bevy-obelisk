@@ -23,24 +23,74 @@ mod tests {
 
     #[test]
     fn enemies_hits_other_faction_only() {
-        assert!(passes_filter(HitFilter::Enemies, Faction::Player, Faction::Enemy, false));
-        assert!(!passes_filter(HitFilter::Enemies, Faction::Player, Faction::Player, false));
-        assert!(!passes_filter(HitFilter::Enemies, Faction::Player, Faction::Enemy, true));
+        assert!(passes_filter(
+            HitFilter::Enemies,
+            Faction::Player,
+            Faction::Enemy,
+            false
+        ));
+        assert!(!passes_filter(
+            HitFilter::Enemies,
+            Faction::Player,
+            Faction::Player,
+            false
+        ));
+        assert!(!passes_filter(
+            HitFilter::Enemies,
+            Faction::Player,
+            Faction::Enemy,
+            true
+        ));
     }
     #[test]
     fn allies_hits_same_faction_only() {
-        assert!(passes_filter(HitFilter::Allies, Faction::Player, Faction::Player, false));
-        assert!(!passes_filter(HitFilter::Allies, Faction::Player, Faction::Enemy, false));
+        assert!(passes_filter(
+            HitFilter::Allies,
+            Faction::Player,
+            Faction::Player,
+            false
+        ));
+        assert!(!passes_filter(
+            HitFilter::Allies,
+            Faction::Player,
+            Faction::Enemy,
+            false
+        ));
     }
     #[test]
     fn all_hits_anyone_but_self() {
-        assert!(passes_filter(HitFilter::All, Faction::Player, Faction::Enemy, false));
-        assert!(passes_filter(HitFilter::All, Faction::Player, Faction::Player, false));
-        assert!(!passes_filter(HitFilter::All, Faction::Player, Faction::Player, true));
+        assert!(passes_filter(
+            HitFilter::All,
+            Faction::Player,
+            Faction::Enemy,
+            false
+        ));
+        assert!(passes_filter(
+            HitFilter::All,
+            Faction::Player,
+            Faction::Player,
+            false
+        ));
+        assert!(!passes_filter(
+            HitFilter::All,
+            Faction::Player,
+            Faction::Player,
+            true
+        ));
     }
     #[test]
     fn caster_hits_only_self() {
-        assert!(passes_filter(HitFilter::Caster, Faction::Player, Faction::Player, true));
-        assert!(!passes_filter(HitFilter::Caster, Faction::Player, Faction::Enemy, false));
+        assert!(passes_filter(
+            HitFilter::Caster,
+            Faction::Player,
+            Faction::Player,
+            true
+        ));
+        assert!(!passes_filter(
+            HitFilter::Caster,
+            Faction::Player,
+            Faction::Enemy,
+            false
+        ));
     }
 }

@@ -22,24 +22,54 @@ mod tests {
 
     #[test]
     fn straight_ahead_is_inside() {
-        assert!(point_in_cone(Vec3::ZERO, Vec3::Z, 45f32.to_radians(), 3.0, Vec3::new(0.0, 0.0, 2.0)));
+        assert!(point_in_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            45f32.to_radians(),
+            3.0,
+            Vec3::new(0.0, 0.0, 2.0)
+        ));
     }
     #[test]
     fn behind_is_outside() {
-        assert!(!point_in_cone(Vec3::ZERO, Vec3::Z, 45f32.to_radians(), 3.0, Vec3::new(0.0, 0.0, -2.0)));
+        assert!(!point_in_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            45f32.to_radians(),
+            3.0,
+            Vec3::new(0.0, 0.0, -2.0)
+        ));
     }
     #[test]
     fn beyond_range_is_outside() {
-        assert!(!point_in_cone(Vec3::ZERO, Vec3::Z, 45f32.to_radians(), 3.0, Vec3::new(0.0, 0.0, 5.0)));
+        assert!(!point_in_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            45f32.to_radians(),
+            3.0,
+            Vec3::new(0.0, 0.0, 5.0)
+        ));
     }
     #[test]
     fn just_outside_the_angle_is_outside() {
         let p = Vec3::new(0.0, 2.0, 1.0); // ~63 deg from +Z
-        assert!(!point_in_cone(Vec3::ZERO, Vec3::Z, 45f32.to_radians(), 3.0, p));
+        assert!(!point_in_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            45f32.to_radians(),
+            3.0,
+            p
+        ));
     }
     #[test]
     fn within_the_angle_is_inside() {
         let p = Vec3::new(0.0, 0.5, 2.0); // ~14 deg from +Z
-        assert!(point_in_cone(Vec3::ZERO, Vec3::Z, 45f32.to_radians(), 3.0, p));
+        assert!(point_in_cone(
+            Vec3::ZERO,
+            Vec3::Z,
+            45f32.to_radians(),
+            3.0,
+            p
+        ));
     }
 }

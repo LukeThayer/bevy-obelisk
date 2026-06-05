@@ -27,15 +27,24 @@ pub trait CastSkillExt {
 
 impl CastSkillExt for EntityCommands<'_> {
     fn cast_skill_at(&mut self, skill_id: impl Into<String>, target: Entity) -> &mut Self {
-        self.insert(PendingCast { skill_id: skill_id.into(), aim: CastAim::Entity(target) });
+        self.insert(PendingCast {
+            skill_id: skill_id.into(),
+            aim: CastAim::Entity(target),
+        });
         self
     }
     fn cast_skill_at_point(&mut self, skill_id: impl Into<String>, point: Vec3) -> &mut Self {
-        self.insert(PendingCast { skill_id: skill_id.into(), aim: CastAim::Point(point) });
+        self.insert(PendingCast {
+            skill_id: skill_id.into(),
+            aim: CastAim::Point(point),
+        });
         self
     }
     fn cast_skill_dir(&mut self, skill_id: impl Into<String>, dir: Dir3) -> &mut Self {
-        self.insert(PendingCast { skill_id: skill_id.into(), aim: CastAim::Direction(dir) });
+        self.insert(PendingCast {
+            skill_id: skill_id.into(),
+            aim: CastAim::Direction(dir),
+        });
         self
     }
 }
