@@ -4,6 +4,8 @@ use bevy::prelude::*;
 #[derive(Component, Clone, Debug)]
 pub struct ObeliskId(pub String);
 
+impl Default for ObeliskId { fn default() -> Self { ObeliskId(String::new()) } }
+
 /// Bidirectional Entity <-> obelisk String id map.
 #[derive(Resource, Default)]
 pub struct ObeliskEntityIndex {
