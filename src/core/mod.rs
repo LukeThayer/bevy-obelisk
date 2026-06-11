@@ -1,5 +1,6 @@
 pub mod components;
 pub mod config;
+pub mod cooldown;
 pub mod tick;
 pub use components::{Attributes, Combatant, Faction, SkillSlots};
 
@@ -18,10 +19,15 @@ impl Plugin for ObeliskCorePlugin {
         app.init_resource::<ObeliskEntityIndex>()
             .init_resource::<SkillRegistry>()
             .init_resource::<CombatRng>()
+            .init_resource::<crate::core::cooldown::Cooldowns>()
             .add_systems(Update, (sync_index_added, sync_index_removed))
             .add_systems(
                 FixedUpdate,
                 tick::tick_effects_system.in_set(ObeliskSet::TickEffects),
+            )
+            .add_systems(
+                FixedUpdate,
+                crate::core::cooldown::tick_cooldowns.in_set(crate::ObeliskSet::TickEffects),
             );
     }
 }

@@ -23,6 +23,20 @@ pub enum CastRejectReason {
     OutOfRange,
     NoTarget,
     NoLineOfSight,
+    OnCooldown,
+}
+
+#[derive(Event, Clone, Debug)]
+pub struct CooldownStarted {
+    pub caster: Entity,
+    pub skill_id: String,
+    pub duration: f32,
+}
+
+#[derive(Event, Clone, Debug)]
+pub struct CooldownReady {
+    pub caster: Entity,
+    pub skill_id: String,
 }
 
 #[derive(Event, Clone, Debug)]
