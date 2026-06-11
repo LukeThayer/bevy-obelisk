@@ -1,7 +1,8 @@
 use crate::assets::{CastTargeting, CastTimeline, CastTimelineHandles, VolumeMotion, WindowPhase};
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
-use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, HitWindowOpened};
+use crate::core::cooldown::Cooldowns;
+use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, CooldownStarted, HitWindowOpened};
 use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
 use crate::timeline::cast::{CastAim, PendingCast};
@@ -31,6 +32,7 @@ pub fn validate_casts(
     transforms: Query<&Transform>,
     spatial: SpatialQuery,
     hurtboxes: Query<&Hurtbox>,
+    mut cooldowns: ResMut<Cooldowns>,
 ) {
     for (caster, req) in &pending {
         commands.entity(caster).remove::<PendingCast>();
@@ -67,6 +69,14 @@ pub fn validate_casts(
                 caster,
                 skill_id: req.skill_id.clone(),
                 reason: CastRejectReason::InsufficientMana,
+            });
+            continue;
+        }
+        if !cooldowns.is_ready(caster, &req.skill_id) {
+            commands.trigger(CastRejected {
+                caster,
+                skill_id: req.skill_id.clone(),
+                reason: CastRejectReason::OnCooldown,
             });
             continue;
         }
@@ -164,6 +174,11 @@ pub fn validate_casts(
             skill_id: req.skill_id.clone(),
             total_duration: windup + active + recovery,
         });
+        let cd = skill.effective_cooldown(attrs.0.cooldown_reduction) as f32;
+        if cd > 0.0 {
+            cooldowns.start(caster, &req.skill_id, cd);
+            commands.trigger(CooldownStarted { caster, skill_id: req.skill_id.clone(), duration: cd });
+        }
     }
 }
 
