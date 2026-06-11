@@ -75,6 +75,7 @@ pub mod assets;
 pub mod combat;
 pub mod core;
 pub mod events;
+pub mod facade;
 pub mod ids;
 pub mod prelude;
 #[cfg(feature = "present")]
