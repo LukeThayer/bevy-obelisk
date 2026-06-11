@@ -2,7 +2,9 @@ use crate::assets::{CastTargeting, CastTimeline, CastTimelineHandles, VolumeMoti
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
-use crate::events::{CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, CooldownStarted, HitWindowOpened};
+use crate::events::{
+    CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, CooldownStarted, HitWindowOpened,
+};
 use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
 use crate::timeline::cast::{CastAim, PendingCast};
@@ -177,7 +179,11 @@ pub fn validate_casts(
         let cd = skill.effective_cooldown(attrs.0.cooldown_reduction) as f32;
         if cd > 0.0 {
             cooldowns.start(caster, &req.skill_id, cd);
-            commands.trigger(CooldownStarted { caster, skill_id: req.skill_id.clone(), duration: cd });
+            commands.trigger(CooldownStarted {
+                caster,
+                skill_id: req.skill_id.clone(),
+                duration: cd,
+            });
         }
     }
 }

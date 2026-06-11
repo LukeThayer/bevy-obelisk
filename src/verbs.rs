@@ -1,6 +1,6 @@
-use bevy::prelude::*;
 use crate::core::components::{Attributes, Combatant, SkillSlots};
 use crate::ids::ObeliskId;
+use bevy::prelude::*;
 use stat_core::StatBlock;
 
 /// Verb-style EntityCommands extensions for spawning + granting.
@@ -57,12 +57,19 @@ impl ObeliskCommandsExt for EntityCommands<'_> {
             if !stat_core::config::effect_registry_initialized() {
                 return;
             }
-            let source_id = entity.get::<Attributes>().map(|a| a.0.id.clone()).unwrap_or_default();
-            let Some(config) = stat_core::effect_registry().get(&effect_id) else { return };
+            let source_id = entity
+                .get::<Attributes>()
+                .map(|a| a.0.id.clone())
+                .unwrap_or_default();
+            let Some(config) = stat_core::effect_registry().get(&effect_id) else {
+                return;
+            };
             let effect = config.to_effect(&source_id);
             let target = entity.id();
             let (total_duration, stacks, triggered_count) = {
-                let Some(mut attrs) = entity.get_mut::<Attributes>() else { return };
+                let Some(mut attrs) = entity.get_mut::<Attributes>() else {
+                    return;
+                };
                 let triggered = attrs.0.add_effect(effect);
                 let applied = attrs.0.effects.iter().find(|e| e.id == effect_id);
                 (
@@ -74,7 +81,11 @@ impl ObeliskCommandsExt for EntityCommands<'_> {
             // OnApply / OnMaxStacks trigger CASCADE (firing the triggered skills) is a later
             // batch; surface it so it isn't lost silently.
             if triggered_count > 0 {
-                bevy::log::debug!("apply_obelisk_effect '{}': {} triggered effects (cascade deferred)", effect_id, triggered_count);
+                bevy::log::debug!(
+                    "apply_obelisk_effect '{}': {} triggered effects (cascade deferred)",
+                    effect_id,
+                    triggered_count
+                );
             }
             entity.world_scope(|world| {
                 world.trigger(crate::events::EffectApplied {
@@ -101,18 +112,29 @@ mod tests {
         let mut block = StatBlock::with_id("victim");
         block.max_life.base = 100.0;
         block.current_life = 100.0;
-        let e = t.app.world_mut().spawn((
-            crate::prelude::Combatant,
-            Attributes(block),
-            crate::prelude::Faction::Enemy,
-            ObeliskId("victim".into()),
-            Transform::default(),
-        )).id();
+        let e = t
+            .app
+            .world_mut()
+            .spawn((
+                crate::prelude::Combatant,
+                Attributes(block),
+                crate::prelude::Faction::Enemy,
+                ObeliskId("victim".into()),
+                Transform::default(),
+            ))
+            .id();
         t.app.update();
-        t.app.world_mut().commands().entity(e).apply_obelisk_effect("burn");
+        t.app
+            .world_mut()
+            .commands()
+            .entity(e)
+            .apply_obelisk_effect("burn");
         t.app.update();
         let attrs = t.app.world().entity(e).get::<Attributes>().unwrap();
-        assert!(attrs.0.effects.iter().any(|ef| ef.id == "burn"), "burn effect should be applied");
+        assert!(
+            attrs.0.effects.iter().any(|ef| ef.id == "burn"),
+            "burn effect should be applied"
+        );
     }
 
     #[test]
@@ -123,16 +145,33 @@ mod tests {
         block.current_life = 60.0;
         block.set_max_barrier(100.0); // so apply_barrier has headroom
         let e = t.app.world_mut().spawn_empty().id();
-        t.app.world_mut().commands().entity(e)
+        t.app
+            .world_mut()
+            .commands()
+            .entity(e)
             .make_combatant(block)
             .grant_skill("firebolt")
             .grant_barrier(25.0);
         t.app.update();
 
-        let attrs = t.app.world().entity(e).get::<Attributes>().expect("Attributes inserted");
+        let attrs = t
+            .app
+            .world()
+            .entity(e)
+            .get::<Attributes>()
+            .expect("Attributes inserted");
         assert_eq!(attrs.0.id, "orc");
-        assert!(attrs.0.current_barrier >= 25.0, "barrier granted (got {})", attrs.0.current_barrier);
-        let slots = t.app.world().entity(e).get::<SkillSlots>().expect("SkillSlots");
+        assert!(
+            attrs.0.current_barrier >= 25.0,
+            "barrier granted (got {})",
+            attrs.0.current_barrier
+        );
+        let slots = t
+            .app
+            .world()
+            .entity(e)
+            .get::<SkillSlots>()
+            .expect("SkillSlots");
         assert!(slots.0.contains(&"firebolt".to_string()));
     }
 }

@@ -1,9 +1,9 @@
-use bevy::ecs::system::SystemParam;
-use bevy::prelude::*;
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
 use crate::events::CastRejectReason;
+use bevy::ecs::system::SystemParam;
+use bevy::prelude::*;
 
 /// Read-only consumer facade for HUD / UI / AI. Holds no `&mut` — safe to use anywhere.
 #[derive(SystemParam)]
@@ -33,7 +33,10 @@ impl ObeliskRead<'_, '_> {
         self.attrs.get(e).map(|a| a.0.effects.len()).unwrap_or(0)
     }
     pub fn has_effect(&self, e: Entity, effect_id: &str) -> bool {
-        self.attrs.get(e).map(|a| a.0.effects.iter().any(|ef| ef.id == effect_id)).unwrap_or(false)
+        self.attrs
+            .get(e)
+            .map(|a| a.0.effects.iter().any(|ef| ef.id == effect_id))
+            .unwrap_or(false)
     }
     pub fn cooldown_remaining(&self, e: Entity, skill_id: &str) -> f32 {
         self.cooldowns.remaining(e, skill_id)
@@ -73,16 +76,39 @@ mod tests {
         block.current_life = 80.0;
         block.max_mana.base = 50.0;
         block.current_mana = 50.0;
-        let hero = t.app.world_mut().spawn((
-            Combatant, Attributes(block), Faction::Player, ObeliskId("hero".into()), Transform::default(),
-        )).id();
+        let hero = t
+            .app
+            .world_mut()
+            .spawn((
+                Combatant,
+                Attributes(block),
+                Faction::Player,
+                ObeliskId("hero".into()),
+                Transform::default(),
+            ))
+            .id();
         t.app.update();
 
-        let life = t.app.world_mut().run_system_once(move |r: ObeliskRead| r.life_of(hero)).unwrap();
+        let life = t
+            .app
+            .world_mut()
+            .run_system_once(move |r: ObeliskRead| r.life_of(hero))
+            .unwrap();
         assert_eq!(life, Some(80.0));
-        let can = t.app.world_mut().run_system_once(move |r: ObeliskRead| r.can_cast(hero, "firebolt")).unwrap();
-        assert!(can.is_ok(), "hero with mana + no cooldown can cast firebolt: {can:?}");
-        let bad = t.app.world_mut().run_system_once(move |r: ObeliskRead| r.can_cast(hero, "nope")).unwrap();
+        let can = t
+            .app
+            .world_mut()
+            .run_system_once(move |r: ObeliskRead| r.can_cast(hero, "firebolt"))
+            .unwrap();
+        assert!(
+            can.is_ok(),
+            "hero with mana + no cooldown can cast firebolt: {can:?}"
+        );
+        let bad = t
+            .app
+            .world_mut()
+            .run_system_once(move |r: ObeliskRead| r.can_cast(hero, "nope"))
+            .unwrap();
         assert_eq!(bad, Err(CastRejectReason::UnknownSkill));
     }
 }

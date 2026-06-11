@@ -9,10 +9,15 @@ pub struct Cooldowns {
 
 impl Cooldowns {
     pub fn is_ready(&self, e: Entity, skill: &str) -> bool {
-        self.remaining.get(&(e, skill.to_string())).map_or(true, |&r| r <= 0.0)
+        self.remaining
+            .get(&(e, skill.to_string()))
+            .is_none_or(|&r| r <= 0.0)
     }
     pub fn remaining(&self, e: Entity, skill: &str) -> f32 {
-        self.remaining.get(&(e, skill.to_string())).copied().unwrap_or(0.0)
+        self.remaining
+            .get(&(e, skill.to_string()))
+            .copied()
+            .unwrap_or(0.0)
     }
     pub fn start(&mut self, e: Entity, skill: &str, duration: f32) {
         if duration > 0.0 {
@@ -24,7 +29,11 @@ impl Cooldowns {
 use crate::events::CooldownReady;
 
 /// Decrement cooldowns each fixed step; emit CooldownReady + remove when they reach zero.
-pub fn tick_cooldowns(time: Res<Time<Fixed>>, mut cooldowns: ResMut<Cooldowns>, mut commands: Commands) {
+pub fn tick_cooldowns(
+    time: Res<Time<Fixed>>,
+    mut cooldowns: ResMut<Cooldowns>,
+    mut commands: Commands,
+) {
     let dt = time.delta_secs();
     let mut ready: Vec<(Entity, String)> = Vec::new();
     for (key, rem) in cooldowns.remaining.iter_mut() {
@@ -35,7 +44,10 @@ pub fn tick_cooldowns(time: Res<Time<Fixed>>, mut cooldowns: ResMut<Cooldowns>, 
     }
     for key in ready {
         cooldowns.remaining.remove(&key);
-        commands.trigger(CooldownReady { caster: key.0, skill_id: key.1 });
+        commands.trigger(CooldownReady {
+            caster: key.0,
+            skill_id: key.1,
+        });
     }
 }
 
