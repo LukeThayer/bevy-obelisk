@@ -84,6 +84,7 @@ pub mod spatial;
 #[cfg(feature = "test-support")]
 pub mod testkit;
 pub mod timeline;
+pub mod verbs;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ObeliskSet {
