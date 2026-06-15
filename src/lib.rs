@@ -104,7 +104,8 @@ impl Plugin for ObeliskSimPlugin {
         app.add_plugins(assets::ObeliskAssetsPlugin)
             .add_plugins(spatial::ObeliskSpatialPlugin)
             .add_plugins(core::ObeliskCorePlugin)
-            .add_plugins(combat::ObeliskCombatPlugin);
+            .add_plugins(combat::ObeliskCombatPlugin)
+            .add_plugins(net::ObeliskNetPlugin);
 
         app.configure_sets(
             FixedUpdate,
