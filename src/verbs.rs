@@ -16,6 +16,9 @@ pub trait ObeliskCommandsExt {
     /// Apply an obelisk effect (by config id) to this entity, sourced from itself.
     /// Looks up the global EffectRegistry, builds the Effect, adds it; emits EffectApplied.
     fn apply_obelisk_effect(&mut self, effect_id: impl Into<String>) -> &mut Self;
+    /// Rebuild this entity's StatBlock from the given stat sources (e.g. a skill tree's
+    /// `to_stat_source()`, equipped items). Replaces prior source-derived stats.
+    fn apply_stat_sources(&mut self, sources: Vec<Box<dyn stat_core::source::StatSource>>) -> &mut Self;
 }
 
 impl ObeliskCommandsExt for EntityCommands<'_> {
@@ -47,6 +50,14 @@ impl ObeliskCommandsExt for EntityCommands<'_> {
         self.queue(move |mut entity: EntityWorldMut| {
             if let Some(mut attrs) = entity.get_mut::<Attributes>() {
                 attrs.0.grant_elude_stacks(stacks);
+            }
+        });
+        self
+    }
+    fn apply_stat_sources(&mut self, sources: Vec<Box<dyn stat_core::source::StatSource>>) -> &mut Self {
+        self.queue(move |mut entity: EntityWorldMut| {
+            if let Some(mut attrs) = entity.get_mut::<Attributes>() {
+                attrs.0.rebuild_from_sources(&sources);
             }
         });
         self
@@ -135,6 +146,36 @@ mod tests {
             attrs.0.effects.iter().any(|ef| ef.id == "burn"),
             "burn effect should be applied"
         );
+    }
+
+    #[test]
+    fn apply_stat_sources_rebuilds_from_a_source() {
+        use stat_core::source::StatSource;
+        use stat_core::stat_block::StatAccumulator;
+
+        struct LifeSource;
+        impl StatSource for LifeSource {
+            fn id(&self) -> &str { "test_life" }
+            fn apply(&self, stats: &mut StatAccumulator) {
+                stats.life_flat += 50.0;
+            }
+        }
+
+        let mut t = ObeliskTestApp::new(1);
+        let e = t.app.world_mut().spawn((
+            Combatant,
+            Attributes(StatBlock::with_id("hero")),
+            crate::prelude::Faction::Player,
+            ObeliskId("hero".into()),
+            Transform::default(),
+        )).id();
+        let base_life = t.app.world().entity(e).get::<Attributes>().unwrap().0.computed_max_life();
+
+        t.app.world_mut().commands().entity(e).apply_stat_sources(vec![Box::new(LifeSource)]);
+        t.app.update();
+
+        let new_life = t.app.world().entity(e).get::<Attributes>().unwrap().0.computed_max_life();
+        assert!(new_life > base_life, "a flat-life source should raise computed_max_life ({base_life} -> {new_life})");
     }
 
     #[test]
