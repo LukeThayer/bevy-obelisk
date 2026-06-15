@@ -139,6 +139,7 @@ impl Plugin for ObeliskSimPlugin {
 pub struct ObeliskPlugins;
 impl PluginGroup for ObeliskPlugins {
     fn build(self) -> PluginGroupBuilder {
+        #[allow(unused_mut)]
         let mut b = PluginGroupBuilder::start::<Self>().add(ObeliskSimPlugin);
         #[cfg(feature = "present")]
         {

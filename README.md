@@ -194,6 +194,84 @@ fn my_combat_test() {
 `ObeliskTestApp` wires `MinimalPlugins` + physics + `ObeliskSimPlugin` with a fixed-step
 `ManualDuration` time source so every tick is perfectly deterministic.
 
+## Server / netcode
+
+### Dual-emit model
+
+obelisk-bevy uses a dual-emit design: every gameplay event fires **two** channels simultaneously.
+
+- **In-process observers** (`app.add_observer(|e: On<DamageResolved>| ...)`) are for VFX, UI, audio, and local reactions — consumed by the presentation layer.
+- **Buffered `NetEvent` stream** — a serializable, `MessageWriter`-backed queue — carries the same events as a network-stable wire format for server→client replication.
+
+Both channels fire for the same underlying gameplay events. `ObeliskNetPlugin` (included in `ObeliskSimPlugin`) mirrors in-process observers into the `NetEvent` buffer automatically.
+
+### Draining the egress on a server
+
+Add a system that reads `MessageReader<NetEvent>` each frame:
+
+```rust
+use obelisk_bevy::prelude::NetEvent;
+use bevy_eventwork::MessageReader; // or your transport's reader
+
+fn replicate(mut reader: MessageReader<NetEvent>) {
+    for ev in reader.read() {
+        // serialize ev (serde::Serialize) and send to clients over your transport
+        let json = serde_json::to_string(&ev).unwrap();
+        send_to_all_clients(json);
+    }
+}
+```
+
+Register it as a normal Bevy system: `app.add_systems(Update, replicate)`.
+
+### Wire format
+
+`NetEvent` is `#[derive(serde::Serialize, serde::Deserialize)]` — it is directly serializable to any serde-compatible format (JSON, MessagePack, bincode, etc.).
+
+Actor references are stable **`String` ids** taken from `obelisk`'s `StatBlock.id` field — not Bevy `Entity` values, which are meaningless across a network boundary.
+
+Variants:
+
+| Variant | Key fields |
+|---|---|
+| `CastBegan` | `caster`, `skill_id`, `total_duration` |
+| `DamageResolved` | `caster`, `target`, `skill_id`, `total_damage`, `is_killing_blow`, `life_after` |
+| `EffectApplied` | `target`, `effect_id`, `total_duration`, `stacks` |
+| `EffectExpired` | `target`, `effect_id` |
+| `DotTicked` | `target`, `effect_id`, `dot_damage`, `life_remaining` |
+| `EntityDied` | `target`, `killer` (optional) |
+
+### Headless server
+
+Build and run the authoritative simulation without any presentation (no window, render, or audio):
+
+```toml
+# Cargo.toml
+obelisk-bevy = { path = "../obelisk-bevy", default-features = false }
+```
+
+Plugin setup (no `DefaultPlugins`):
+
+```rust
+App::new()
+    .add_plugins(MinimalPlugins)
+    .add_plugins(bevy::asset::AssetPlugin::default())
+    .add_plugins(bevy::mesh::MeshPlugin)
+    .add_plugins(bevy::scene::ScenePlugin)
+    .add_plugins(ObeliskSimPlugin)   // includes ObeliskNetPlugin; no present layer
+    .run();
+```
+
+A working minimal example is at `examples/headless_server.rs`:
+
+```bash
+cargo run --example headless_server --no-default-features
+```
+
+### Transport
+
+obelisk-bevy provides the **authoritative serializable event stream**; the game chooses its own transport. Drop-in options include [`bevy_replicon`](https://github.com/projectharmonia/bevy_replicon) and [`lightyear`](https://github.com/cBournhonesque/lightyear) — both accept custom serialized message types.
+
 ## License
 
 MIT
