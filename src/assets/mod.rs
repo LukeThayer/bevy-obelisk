@@ -10,6 +10,8 @@ pub struct CastTimeline {
     pub collision_windows: Vec<CollisionWindow>,
     pub targeting: CastTargeting,
     pub delivery: CastDelivery,
+    #[serde(default)]
+    pub vfx_cues: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

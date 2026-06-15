@@ -104,3 +104,18 @@ pub struct EntityDied {
 }
 
 pub use stat_core::Effect as ObeliskEffect;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CueKind { OnCast, OnWindow, OnHit }
+
+/// A VFX/audio cue fired by a skill at a moment in its timeline. The presentation layer
+/// (or game) binds `cue_id` to a handler via `App::observe_cue`.
+#[derive(Event, Clone, Debug)]
+pub struct CueEvent {
+    pub cue_id: String,
+    /// The entity the cue is anchored to (caster for OnCast/OnWindow, target for OnHit).
+    pub source: Entity,
+    /// World position to spawn the effect at.
+    pub position: Vec3,
+    pub kind: CueKind,
+}
