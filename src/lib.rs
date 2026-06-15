@@ -86,6 +86,7 @@ pub mod spatial;
 pub mod testkit;
 pub mod timeline;
 pub mod verbs;
+pub mod vfx;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ObeliskSet {
@@ -105,7 +106,8 @@ impl Plugin for ObeliskSimPlugin {
             .add_plugins(spatial::ObeliskSpatialPlugin)
             .add_plugins(core::ObeliskCorePlugin)
             .add_plugins(combat::ObeliskCombatPlugin)
-            .add_plugins(net::ObeliskNetPlugin);
+            .add_plugins(net::ObeliskNetPlugin)
+            .add_plugins(vfx::ObeliskCuePlugin);
 
         app.configure_sets(
             FixedUpdate,
