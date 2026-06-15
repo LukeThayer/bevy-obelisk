@@ -2,6 +2,31 @@ use bevy::prelude::*;
 use crate::assets::{CastTimeline, CastTimelineHandles};
 use crate::events::{CastBegan, CueEvent, CueKind, HitConfirmed, HitWindowOpened};
 
+/// App-builder ergonomic: run `handler` whenever a `CueEvent` with `cue_id` fires.
+pub trait ObeliskCueExt {
+    fn observe_cue(
+        &mut self,
+        cue_id: impl Into<String>,
+        handler: impl Fn(&CueEvent, &mut Commands) + Send + Sync + 'static,
+    ) -> &mut Self;
+}
+
+impl ObeliskCueExt for App {
+    fn observe_cue(
+        &mut self,
+        cue_id: impl Into<String>,
+        handler: impl Fn(&CueEvent, &mut Commands) + Send + Sync + 'static,
+    ) -> &mut Self {
+        let cue_id = cue_id.into();
+        self.add_observer(move |ev: On<CueEvent>, mut commands: Commands| {
+            if ev.event().cue_id == cue_id {
+                handler(ev.event(), &mut commands);
+            }
+        });
+        self
+    }
+}
+
 /// Emits `CueEvent`s from a skill's authored `vfx_cues` at cast/window/hit moments.
 /// Part of the sim (cheap + headless-testable); servers simply don't observe CueEvent.
 pub struct ObeliskCuePlugin;

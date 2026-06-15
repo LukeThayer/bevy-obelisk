@@ -8,4 +8,5 @@
   ],
   targeting: SingleEntity( range: 15.0 ),
   delivery: Projectile( speed: 20.0 ),
+  vfx_cues: { "on_cast": "firebolt_cast", "on_hit": "firebolt_impact" },
 )
