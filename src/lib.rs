@@ -77,6 +77,7 @@ pub mod core;
 pub mod events;
 pub mod facade;
 pub mod ids;
+pub mod net;
 pub mod prelude;
 #[cfg(feature = "present")]
 pub mod present;
