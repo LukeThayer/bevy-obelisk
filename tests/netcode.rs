@@ -146,30 +146,49 @@ fn cast_rejected_is_mirrored_to_netevents() {
     use obelisk_bevy::net::NetEvent;
     let mut t = ObeliskTestApp::new(1);
     t.app.init_resource::<Collected>();
-    t.app.add_systems(Update, |mut r: MessageReader<NetEvent>, mut c: ResMut<Collected>| {
-        for ev in r.read() { c.0.push(ev.clone()); }
-    });
+    t.app.add_systems(
+        Update,
+        |mut r: MessageReader<NetEvent>, mut c: ResMut<Collected>| {
+            for ev in r.read() {
+                c.0.push(ev.clone());
+            }
+        },
+    );
     // A caster with no loaded timeline -> CastRejected{UnknownSkill}.
-    let caster = t.app.world_mut().spawn((
-        Combatant,
-        Attributes(make_block("player", 100.0, 100.0)),
-        Faction::Player,
-        ObeliskId("player".into()),
-        Transform::default(),
-    )).id();
-    let target = t.app.world_mut().spawn((
-        Combatant,
-        Attributes(make_block("t", 50.0, 0.0)),
-        Faction::Enemy,
-        ObeliskId("t".into()),
-        Transform::default(),
-    )).id();
+    let caster = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("player", 100.0, 100.0)),
+            Faction::Player,
+            ObeliskId("player".into()),
+            Transform::default(),
+        ))
+        .id();
+    let target = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("t", 50.0, 0.0)),
+            Faction::Enemy,
+            ObeliskId("t".into()),
+            Transform::default(),
+        ))
+        .id();
     t.app.update();
-    t.app.world_mut().commands().entity(caster).cast_skill_at("no_such_skill", target);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(caster)
+        .cast_skill_at("no_such_skill", target);
     t.advance_ticks(5);
     let collected = t.app.world().resource::<Collected>().0.clone();
     assert!(
-        collected.iter().any(|e| matches!(e, NetEvent::CastRejected { caster, .. } if caster == "player")),
+        collected
+            .iter()
+            .any(|e| matches!(e, NetEvent::CastRejected { caster, .. } if caster == "player")),
         "a rejected cast should be mirrored to the NetEvent stream"
     );
 }

@@ -77,7 +77,10 @@ fn mirror_cast_began(
 ) {
     let e = ev.event();
     let Some(caster) = id_of(&index, e.caster) else {
-        bevy::log::warn!("NetEvent CastBegan dropped: caster {:?} has no ObeliskId", e.caster);
+        bevy::log::warn!(
+            "NetEvent CastBegan dropped: caster {:?} has no ObeliskId",
+            e.caster
+        );
         return;
     };
     net.write(NetEvent::CastBegan {
@@ -94,11 +97,17 @@ fn mirror_damage_resolved(
 ) {
     let e = ev.event();
     let Some(caster) = id_of(&index, e.caster) else {
-        bevy::log::warn!("NetEvent DamageResolved dropped: caster {:?} has no ObeliskId", e.caster);
+        bevy::log::warn!(
+            "NetEvent DamageResolved dropped: caster {:?} has no ObeliskId",
+            e.caster
+        );
         return;
     };
     let Some(target) = id_of(&index, e.target) else {
-        bevy::log::warn!("NetEvent DamageResolved dropped: target {:?} has no ObeliskId", e.target);
+        bevy::log::warn!(
+            "NetEvent DamageResolved dropped: target {:?} has no ObeliskId",
+            e.target
+        );
         return;
     };
     net.write(NetEvent::DamageResolved {
@@ -118,7 +127,10 @@ fn mirror_effect_applied(
 ) {
     let e = ev.event();
     let Some(target) = id_of(&index, e.target) else {
-        bevy::log::warn!("NetEvent EffectApplied dropped: target {:?} has no ObeliskId", e.target);
+        bevy::log::warn!(
+            "NetEvent EffectApplied dropped: target {:?} has no ObeliskId",
+            e.target
+        );
         return;
     };
     net.write(NetEvent::EffectApplied {
@@ -136,7 +148,10 @@ fn mirror_effect_expired(
 ) {
     let e = ev.event();
     let Some(target) = id_of(&index, e.target) else {
-        bevy::log::warn!("NetEvent EffectExpired dropped: target {:?} has no ObeliskId", e.target);
+        bevy::log::warn!(
+            "NetEvent EffectExpired dropped: target {:?} has no ObeliskId",
+            e.target
+        );
         return;
     };
     net.write(NetEvent::EffectExpired {
@@ -152,7 +167,10 @@ fn mirror_dot_ticked(
 ) {
     let e = ev.event();
     let Some(target) = id_of(&index, e.target) else {
-        bevy::log::warn!("NetEvent DotTicked dropped: target {:?} has no ObeliskId", e.target);
+        bevy::log::warn!(
+            "NetEvent DotTicked dropped: target {:?} has no ObeliskId",
+            e.target
+        );
         return;
     };
     net.write(NetEvent::DotTicked {
@@ -170,7 +188,10 @@ fn mirror_entity_died(
 ) {
     let e = ev.event();
     let Some(target) = id_of(&index, e.target) else {
-        bevy::log::warn!("NetEvent EntityDied dropped: target {:?} has no ObeliskId", e.target);
+        bevy::log::warn!(
+            "NetEvent EntityDied dropped: target {:?} has no ObeliskId",
+            e.target
+        );
         return;
     };
     net.write(NetEvent::EntityDied {
@@ -186,7 +207,10 @@ fn mirror_cast_rejected(
 ) {
     let e = ev.event();
     let Some(caster) = id_of(&index, e.caster) else {
-        bevy::log::warn!("NetEvent CastRejected dropped: caster {:?} has no ObeliskId", e.caster);
+        bevy::log::warn!(
+            "NetEvent CastRejected dropped: caster {:?} has no ObeliskId",
+            e.caster
+        );
         return;
     };
     net.write(NetEvent::CastRejected {

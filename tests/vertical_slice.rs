@@ -102,11 +102,19 @@ fn firebolt_casts_hits_damages_and_burns_to_death() {
 #[test]
 fn second_cast_while_casting_is_rejected() {
     let mut t = ObeliskTestApp::new(1);
-    let handle: Handle<CastTimeline> =
-        t.app.world().resource::<AssetServer>().load("assets/skills/firebolt.cast.ron");
+    let handle: Handle<CastTimeline> = t
+        .app
+        .world()
+        .resource::<AssetServer>()
+        .load("assets/skills/firebolt.cast.ron");
     for _ in 0..2000 {
         t.app.update();
-        if t.app.world().resource::<Assets<CastTimeline>>().get(&handle).is_some() {
+        if t.app
+            .world()
+            .resource::<Assets<CastTimeline>>()
+            .get(&handle)
+            .is_some()
+        {
             break;
         }
     }
@@ -145,15 +153,26 @@ fn second_cast_while_casting_is_rejected() {
     t.app.update();
 
     // First cast: starts an ActiveCast (firebolt windup is 0.3 s ~ 18 ticks).
-    t.app.world_mut().commands().entity(player).cast_skill_at("firebolt", dummy);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_at("firebolt", dummy);
     t.advance_ticks(3); // still in windup -> ActiveCast present
 
     // Second cast while the first is in flight.
-    t.app.world_mut().commands().entity(player).cast_skill_at("firebolt", dummy);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_at("firebolt", dummy);
     t.advance_ticks(2);
 
     assert!(
-        t.rec().cast_rejected.iter().any(|r| r.reason == CastRejectReason::AlreadyCasting),
+        t.rec()
+            .cast_rejected
+            .iter()
+            .any(|r| r.reason == CastRejectReason::AlreadyCasting),
         "a second cast while one is in flight must be rejected AlreadyCasting"
     );
     let _ = dummy;
@@ -162,20 +181,73 @@ fn second_cast_while_casting_is_rejected() {
 #[test]
 fn cast_without_mana_is_rejected() {
     let mut t = ObeliskTestApp::new(1);
-    let handle: Handle<CastTimeline> = t.app.world().resource::<AssetServer>().load("assets/skills/firebolt.cast.ron");
-    for _ in 0..2000 { t.app.update(); if t.app.world().resource::<Assets<CastTimeline>>().get(&handle).is_some() { break; } }
-    t.app.world_mut().resource_mut::<CastTimelineHandles>().0.insert("firebolt".into(), handle);
+    let handle: Handle<CastTimeline> = t
+        .app
+        .world()
+        .resource::<AssetServer>()
+        .load("assets/skills/firebolt.cast.ron");
+    for _ in 0..2000 {
+        t.app.update();
+        if t.app
+            .world()
+            .resource::<Assets<CastTimeline>>()
+            .get(&handle)
+            .is_some()
+        {
+            break;
+        }
+    }
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("firebolt".into(), handle);
 
     // Caster with ZERO mana (firebolt costs 5).
-    let player = t.app.world_mut().spawn((Combatant, Attributes(make_block("player", 100.0, 0.0)), Faction::Player, ObeliskId("player".into()), Transform::from_xyz(0.0,0.0,0.0))).id();
-    let dummy = t.app.world_mut().spawn((Combatant, Attributes(make_block("dummy", 50.0, 0.0)), Faction::Enemy, ObeliskId("dummy".into()), Transform::from_xyz(0.0,0.0,2.0))).id();
-    { let mut c = t.app.world_mut().commands(); insert_hurtbox(&mut c, dummy, 0.6, Vec3::new(0.0,0.0,2.0)); }
+    let player = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("player", 100.0, 0.0)),
+            Faction::Player,
+            ObeliskId("player".into()),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ))
+        .id();
+    let dummy = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("dummy", 50.0, 0.0)),
+            Faction::Enemy,
+            ObeliskId("dummy".into()),
+            Transform::from_xyz(0.0, 0.0, 2.0),
+        ))
+        .id();
+    {
+        let mut c = t.app.world_mut().commands();
+        insert_hurtbox(&mut c, dummy, 0.6, Vec3::new(0.0, 0.0, 2.0));
+    }
     t.app.update();
-    t.app.world_mut().commands().entity(player).cast_skill_at("firebolt", dummy);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_at("firebolt", dummy);
     t.advance_ticks(5);
-    assert!(t.rec().cast_rejected.iter().any(|r| r.reason == CastRejectReason::InsufficientMana),
-        "a cast with no mana must be rejected InsufficientMana");
-    assert!(t.rec().damage_resolved.is_empty(), "no damage on a rejected cast");
+    assert!(
+        t.rec()
+            .cast_rejected
+            .iter()
+            .any(|r| r.reason == CastRejectReason::InsufficientMana),
+        "a cast with no mana must be rejected InsufficientMana"
+    );
+    assert!(
+        t.rec().damage_resolved.is_empty(),
+        "no damage on a rejected cast"
+    );
     let _ = dummy;
 }
 
