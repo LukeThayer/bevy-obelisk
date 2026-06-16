@@ -82,6 +82,7 @@ pub mod net;
 pub mod prelude;
 #[cfg(feature = "present")]
 pub mod present;
+pub mod scenario;
 pub mod spatial;
 #[cfg(feature = "test-support")]
 pub mod testkit;
