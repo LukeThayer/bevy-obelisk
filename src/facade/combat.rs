@@ -113,6 +113,60 @@ mod tests {
             .id()
     }
 
+    // `aoe_fan` is NOT in the golden feature matrix: `resolve_aoe` is a programmatic
+    // SystemParam call, not driven through the cast/hitbox event pipeline, so a golden
+    // event-trace would be awkward. We cover it here directly instead — asserting it hits
+    // every (non-self) target and that the same seed yields an identical, deterministic
+    // outcome (the stable-sort-by-id guarantees iteration order can't perturb the RNG).
+    #[test]
+    fn resolve_aoe_hits_all_targets_deterministically() {
+        let run = || {
+            let mut t = ObeliskTestApp::new(11);
+            let caster = spawn(&mut t, "caster", Faction::Player, 100.0);
+            let a = spawn(&mut t, "enemy_a", Faction::Enemy, 100.0);
+            let b = spawn(&mut t, "enemy_b", Faction::Enemy, 100.0);
+            let c = spawn(&mut t, "enemy_c", Faction::Enemy, 100.0);
+            t.app.update();
+            // Include the caster in the target list to prove self is skipped.
+            let targets = [a, caster, b, c];
+            let hits = t
+                .app
+                .world_mut()
+                .run_system_once(move |mut combat: ObeliskCombat| {
+                    combat.resolve_aoe(caster, &targets, "firebolt")
+                })
+                .unwrap();
+            let life = |t: &ObeliskTestApp, e: Entity| {
+                t.app
+                    .world()
+                    .entity(e)
+                    .get::<Attributes>()
+                    .unwrap()
+                    .0
+                    .current_life
+            };
+            (
+                hits,
+                life(&t, a),
+                life(&t, b),
+                life(&t, c),
+                life(&t, caster),
+            )
+        };
+        let (hits, la, lb, lc, lcaster) = run();
+        assert_eq!(hits, 3, "all three enemies hit, caster skipped");
+        assert!(
+            la < 100.0 && lb < 100.0 && lc < 100.0,
+            "every enemy took damage"
+        );
+        assert_eq!(lcaster, 100.0, "the caster (in the list) must be skipped");
+        assert_eq!(
+            run(),
+            (hits, la, lb, lc, lcaster),
+            "same seed -> identical AoE outcome (deterministic, order-independent)"
+        );
+    }
+
     #[test]
     fn resolve_skill_hit_deals_damage_programmatically() {
         let mut t = ObeliskTestApp::new(5);
