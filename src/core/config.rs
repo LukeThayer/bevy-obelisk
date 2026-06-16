@@ -39,18 +39,20 @@ pub trait ObeliskConfigExt {
 
 impl ObeliskConfigExt for App {
     fn add_obelisk_config_constants_default(&mut self) -> &mut Self {
-        if !stat_core::config::constants_initialized() {
-            stat_core::init_constants_default().expect("init constants");
-        }
+        // ensure_constants_initialized() is idempotent (Once-guarded defaults) — no manual guard needed.
+        stat_core::config::ensure_constants_initialized();
         self
     }
     fn add_obelisk_config_constants(&mut self, path: &Path) -> &mut Self {
+        // No ensure_* variant for a custom path exists; guard manually so we never double-init.
         if !stat_core::config::constants_initialized() {
             stat_core::init_constants(path).expect("init constants from path");
         }
         self
     }
     fn add_obelisk_effects(&mut self, dir: &Path) -> &mut Self {
+        // ensure_effect_registry_initialized() initialises an EMPTY registry — not what we want here;
+        // guard manually so we load from `dir` on first call without risking a double-init panic.
         if !stat_core::config::effect_registry_initialized() {
             stat_core::init_effect_registry(dir).expect("init effect registry");
         }

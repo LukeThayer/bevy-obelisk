@@ -11,7 +11,8 @@ pub fn init_test_obelisk() {
     INIT.call_once(|| {
         stat_core::config::ensure_constants_initialized();
         if !stat_core::config::effect_registry_initialized() {
-            let _ = stat_core::init_effect_registry(Path::new("tests/fixtures/effects"));
+            stat_core::init_effect_registry(Path::new("tests/fixtures/effects"))
+                .expect("load test effect fixtures");
         }
     });
 }

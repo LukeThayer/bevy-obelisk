@@ -166,3 +166,30 @@ fn out_of_range_cast_is_rejected() {
         "no damage on a rejected cast"
     );
 }
+
+#[test]
+fn cast_blocked_by_obstacle_is_rejected_then_clears() {
+    use avian3d::prelude::*;
+    let mut t = ObeliskTestApp::new(1);
+    load_cast(&mut t, "firebolt", "firebolt.cast.ron");
+
+    let player = spawn_combatant(&mut t, "player", Faction::Player, Vec3::ZERO, 100.0);
+    let target = spawn_combatant(&mut t, "target", Faction::Enemy, Vec3::new(0.0, 0.0, 6.0), 100.0);
+    // A wall (non-hurtbox static collider) between them at z=3.
+    let wall = t.app.world_mut().spawn((RigidBody::Static, Collider::sphere(1.0), Transform::from_xyz(0.0, 0.0, 3.0))).id();
+    t.app.update(); t.app.update(); t.app.update(); // register colliders
+
+    t.app.world_mut().commands().entity(player).cast_skill_at("firebolt", target);
+    t.advance_ticks(3);
+    assert!(t.rec().cast_rejected.iter().any(|r| r.reason == CastRejectReason::NoLineOfSight),
+        "a cast through a wall must be rejected NoLineOfSight");
+
+    // Remove the wall; now the cast should begin.
+    t.app.world_mut().entity_mut(wall).despawn();
+    t.app.update(); t.app.update();
+    t.app.world_mut().commands().entity(player).cast_skill_at("firebolt", target);
+    t.advance_ticks(3);
+    assert!(t.rec().cast_began.iter().any(|c| c.skill_id == "firebolt"),
+        "with LOS clear, the cast should begin");
+    let _ = (player, target);
+}

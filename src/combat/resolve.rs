@@ -214,10 +214,7 @@ base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
 
     #[test]
     fn burn_is_applied_and_ticks_down_life() {
-        stat_core::config::ensure_constants_initialized();
-        if !stat_core::config::effect_registry_initialized() {
-            let _ = stat_core::init_effect_registry(std::path::Path::new("tests/fixtures/effects"));
-        }
+        crate::testkit::init_test_obelisk();
         let registry =
             stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills"))
                 .unwrap();
