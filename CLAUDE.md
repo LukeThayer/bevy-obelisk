@@ -42,6 +42,57 @@ only gates obelisk-bevy's own crate.
 
 ---
 
+## Validating changes
+
+A scenario library (`src/scenario/`) drives three validation surfaces off one source of truth.
+`feature_matrix()` (`src/scenario/library.rs`) is the canonical set of deterministic scenarios; the
+golden traces are the agent-facing regression backbone, the screenshots are headless visual proof,
+and the playground is the human-facing window.
+
+**Golden-trace regression (the backbone — run this after any behavior change).**
+```bash
+cargo test --features test-support --test golden            # diff every scenario against its committed trace
+UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate the goldens
+```
+`run_scenario` (`src/scenario/run.rs`) plays each scenario headlessly through the **public**
+integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
+records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
+diffed against `tests/golden/<name>.trace`. There are **11 scenarios**: `firebolt_kill`,
+`cone_cleave`, `faction_filter`, `out_of_range`, `line_of_sight`, `already_casting`, `apply_effect`,
+`cooldown_gate`, `trigger_cascade`, `loot_on_death`, `netcode_egress` (the last records the buffered
+`NetEvent` egress into the trace). `aoe_fan`/`stat_sources`/`vfx_cues` are intentionally NOT in the
+matrix — they aren't distinct cast-pipeline event traces (covered by direct unit tests / folded into
+`firebolt_kill`); see the `feature_matrix()` doc comment.
+
+> **Regression rule.** After **any** behavior change, run the golden suite. A failing golden is a
+> behavior change you must justify. Do NOT blind-regenerate: if a trace change is intentional, run
+> `UPDATE_GOLDEN=1`, **review the golden diff** (`git diff tests/golden/`) to confirm it matches the
+> intended change, and note the rationale in the commit before committing. The goldens ARE the
+> regression baseline; an unreviewed regenerate silently launders a regression.
+
+**Headless screenshots (read a scene as an agent).**
+```bash
+cargo run --example screenshot --features debug-gizmos -- --scenario firebolt_kill --tick 24
+```
+Plays the named scenario to `--tick <n>` and renders the off-screen frame to
+`screenshots/<name>-<tick>.png` (proven on Metal in this environment); `Read` the PNG to inspect the
+scene. It composes the live sim meshes + the debug-viz gizmos + the projectile/hit/death material
+reactions — the same visuals as the playground. **Limitation:** the `bevy_ui` HUD/event-log/floating
+text does NOT compose into the off-screen target (no UI camera is wired into the image render); use
+the windowed playground to see the HUD. Defaults: `--scenario firebolt_kill --tick 24`.
+
+**Windowed playground (human visual check).**
+```bash
+cargo run --example playground --features debug-gizmos
+```
+Number keys `1`-`9` pick + replay `feature_matrix()[i-1]`, `Space` free-casts the player's first
+skill at the nearest enemy (via `ObeliskSpatial`), `R` resets. The debug-viz layer
+(`src/present/debug_viz.rs`) draws the gizmos (hurtbox/hitbox/cone/cast-ring, under `debug-gizmos`),
+the projectile mesh + hit/death reactions, and the HUD (roster + event log + floating damage, under
+`present`). The agent can't drive the window — use the screenshot renderer to corroborate.
+
+---
+
 ## Architecture
 
 **Single crate, modules** (the sim ↔ presentation boundary is module discipline + the `present`

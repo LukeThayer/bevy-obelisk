@@ -20,6 +20,23 @@ Vertical slice complete. See the design spec:
 
 - [docs/superpowers/specs/2026-06-04-obelisk-bevy-plugin-design.md](docs/superpowers/specs/2026-06-04-obelisk-bevy-plugin-design.md)
 
+## Validating changes
+
+A shared scenario library (`src/scenario/`) drives three validation surfaces:
+
+- **Golden-trace regression** — `cargo test --features test-support --test golden` diffs every
+  scenario in `feature_matrix()` (`src/scenario/library.rs`) against a committed event trace. Run it
+  after any behavior change; if a trace change is intentional, regenerate with
+  `UPDATE_GOLDEN=1 cargo test --features test-support --test golden` and **review the golden diff
+  before committing** (never blind-regenerate).
+- **Headless screenshots** — `cargo run --example screenshot --features debug-gizmos -- --scenario <name> --tick <n>`
+  renders a scenario at a fixed tick to `screenshots/<name>-<tick>.png`.
+- **Windowed playground** — `cargo run --example playground --features debug-gizmos` (number keys
+  pick a scenario, `Space` free-casts, `R` resets).
+
+See the "Validating changes" section of [CLAUDE.md](CLAUDE.md) for the full workflow and the
+regression rule.
+
 ## Usage
 
 ### Add the dependency
