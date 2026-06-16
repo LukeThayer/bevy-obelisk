@@ -91,8 +91,7 @@ mod tests {
         found.0 = hits.iter().any(|e| q.get(*e).is_ok());
     }
 
-    #[test]
-    fn spatial_query_finds_an_overlapping_hurtbox() {
+    fn make_physics_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_plugins(bevy::asset::AssetPlugin::default())
@@ -102,10 +101,16 @@ mod tests {
             .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
                 Duration::from_millis(100),
             ))
-            .insert_resource(Time::<Fixed>::from_hz(60.0))
-            .init_resource::<Found>();
+            .insert_resource(Time::<Fixed>::from_hz(60.0));
         app.finish();
         app.cleanup();
+        app
+    }
+
+    #[test]
+    fn spatial_query_finds_an_overlapping_hurtbox() {
+        let mut app = make_physics_app();
+        app.init_resource::<Found>();
 
         let dummy = app.world_mut().spawn_empty().id();
         {
@@ -125,6 +130,80 @@ mod tests {
         assert!(
             app.world().resource::<Found>().0,
             "SpatialQuery should find the static hurtbox collider"
+        );
+    }
+
+    /// Collects SpatialQuery results for the moving-owner probe into a resource.
+    #[derive(Resource, Default)]
+    struct MoveProbe {
+        found_at_new: bool,
+        found_at_old: bool,
+    }
+
+    fn move_probe_sys(spatial: SpatialQuery, mut probe: ResMut<MoveProbe>) {
+        let new_pos = Vec3::new(0.0, 0.0, 5.0);
+        let hits_new = spatial.shape_intersections(
+            &Collider::sphere(0.5),
+            new_pos,
+            Quat::IDENTITY,
+            &SpatialQueryFilter::default(),
+        );
+        let hits_old = spatial.shape_intersections(
+            &Collider::sphere(0.5),
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            &SpatialQueryFilter::default(),
+        );
+        probe.found_at_new = !hits_new.is_empty();
+        probe.found_at_old = !hits_old.is_empty();
+    }
+
+    /// Regression test: a hurtbox must follow its owner when the owner's Transform is moved.
+    ///
+    /// This verifies the empirical behavior: after moving the owner entity, `SpatialQuery`
+    /// must find the hurtbox at the NEW position and not at the old one.
+    #[test]
+    fn hurtbox_tracks_a_moving_owner() {
+        let mut app = make_physics_app();
+        app.init_resource::<MoveProbe>();
+
+        // Spawn the owner and attach a hurtbox at the origin.
+        let owner = app.world_mut().spawn_empty().id();
+        {
+            let world = app.world_mut();
+            let mut commands = world.commands();
+            insert_hurtbox(&mut commands, owner, 0.5, Vec3::ZERO);
+        }
+        // Let physics register the collider.
+        app.update();
+        app.update();
+        app.update();
+
+        // Move the owner to a new position.
+        let new_pos = Vec3::new(0.0, 0.0, 5.0);
+        app.world_mut()
+            .entity_mut(owner)
+            .get_mut::<Transform>()
+            .expect("owner should have Transform")
+            .translation = new_pos;
+
+        // Let physics propagate the transform change.
+        app.update();
+        app.update();
+        app.update();
+
+        // Run the probe system to capture SpatialQuery results.
+        app.add_systems(Update, move_probe_sys);
+        app.update();
+
+        let probe = app.world().resource::<MoveProbe>();
+        assert!(
+            probe.found_at_new,
+            "hurtbox must be detectable at the owner's new position (0,0,5)"
+        );
+        assert!(
+            !probe.found_at_old,
+            "hurtbox must NOT be detectable at the old position (0,0,0) after the owner moved"
         );
     }
 }
