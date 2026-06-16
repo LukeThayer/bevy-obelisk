@@ -111,6 +111,18 @@ pub struct LootDropped {
     pub drops: Vec<tables_core::Drop>,
 }
 
+/// Fired whenever an obelisk effect-condition trigger fires (OnApply/OnMaxStacks/OnConsume/
+/// OnExpire/OnKill). Emitted unconditionally so triggers are NEVER silently dropped — even
+/// when the trigger is not (yet) auto-resolved into a triggered skill packet by the engine.
+/// The game can observe this to drive bespoke routing (splash, on-kill targeting, etc.).
+#[derive(Event, Clone, Debug)]
+pub struct TriggerFired {
+    pub source: Entity,
+    pub target: Entity,
+    pub skill_id: String,
+    pub effect_id: String,
+}
+
 pub use stat_core::Effect as ObeliskEffect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -83,7 +83,7 @@ impl ObeliskCommandsExt for EntityCommands<'_> {
             };
             let effect = config.to_effect(&source_id);
             let target = entity.id();
-            let (total_duration, stacks, triggered_count) = {
+            let (total_duration, stacks, triggered) = {
                 let Some(mut attrs) = entity.get_mut::<Attributes>() else {
                     return;
                 };
@@ -92,18 +92,9 @@ impl ObeliskCommandsExt for EntityCommands<'_> {
                 (
                     applied.map(|e| e.total_duration).unwrap_or(0.0),
                     applied.map(|e| e.stacks).unwrap_or(1),
-                    triggered.len(),
+                    triggered,
                 )
             };
-            // OnApply / OnMaxStacks trigger CASCADE (firing the triggered skills) is a later
-            // batch; surface it so it isn't lost silently.
-            if triggered_count > 0 {
-                bevy::log::debug!(
-                    "apply_obelisk_effect '{}': {} triggered effects (cascade deferred)",
-                    effect_id,
-                    triggered_count
-                );
-            }
             entity.world_scope(|world| {
                 world.trigger(crate::events::EffectApplied {
                     target,
@@ -111,6 +102,18 @@ impl ObeliskCommandsExt for EntityCommands<'_> {
                     total_duration,
                     stacks,
                 });
+                // Surface every effect-condition trigger (OnApply / OnMaxStacks) so it is never
+                // silently dropped. Full auto-firing of the triggered skills from this command
+                // closure is deferred to the game/engine; here source == target since this is a
+                // self-applied effect.
+                for te in &triggered {
+                    world.trigger(crate::events::TriggerFired {
+                        source: target,
+                        target,
+                        skill_id: te.skill_id.clone(),
+                        effect_id: te.effect_id.clone(),
+                    });
+                }
             });
         });
         self

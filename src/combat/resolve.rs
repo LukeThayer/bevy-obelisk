@@ -11,6 +11,11 @@ pub struct HitOutcome {
     pub is_killing_blow: bool,
     pub effects_applied: Vec<Effect>,
     pub mana_spent: f64,
+    /// Effect-condition triggers produced by this hit (OnApply/OnMaxStacks/OnConsume, etc.):
+    /// both caster-side (from consuming self-effects in `use_skill_against`) and target-side
+    /// (from status effects applied to the defender during damage resolution). Surfaced so the
+    /// caller can fire / observe them — never silently dropped.
+    pub triggered: Vec<stat_core::TriggeredEffect>,
 }
 
 /// The ONE true deterministic resolve path. Never calls `receive_damage`/`resolve_damage`.
@@ -39,6 +44,15 @@ pub fn resolve_one_hit(
         .flat_map(|r| r.effects_applied.clone())
         .collect();
 
+    // Surface ALL effect-condition triggers so none are silently dropped:
+    //  - caster-side: produced by `use_skill_against` consuming self-effects (OnConsume, etc.).
+    //  - target-side: produced while resolving the packets against the defender, e.g. an OnApply
+    //    condition firing when a status effect lands on the target this hit.
+    let mut triggered: Vec<stat_core::TriggeredEffect> = skill_result.triggered_effects.clone();
+    for r in &tr.results {
+        triggered.extend(r.triggered_effects.iter().cloned());
+    }
+
     // Write the mutated defender back into the caller's target.
     *target = tr.defender;
 
@@ -47,6 +61,7 @@ pub fn resolve_one_hit(
         is_killing_blow,
         effects_applied,
         mana_spent: skill_result.mana_spent,
+        triggered,
     })
 }
 
@@ -116,6 +131,85 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
                 .total_damage
         };
         assert_eq!(run(), run(), "same seed must produce identical damage");
+    }
+
+    /// Firebolt has no skill/effect triggers, so `triggered` must come back empty (and the
+    /// field must be accessible without panicking) — proving the additive surfacing is a no-op
+    /// for the untriggered slice.
+    #[test]
+    fn firebolt_produces_no_triggers() {
+        stat_core::config::ensure_constants_initialized();
+        let registry = firebolt_registry();
+        let skill = registry.get("firebolt").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 50.0;
+        target.current_life = 50.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+        assert!(
+            outcome.triggered.is_empty(),
+            "firebolt has no triggers; HitOutcome.triggered must be empty"
+        );
+    }
+
+    /// Author a real triggered effect end-to-end at the resolve layer: a caster carries a
+    /// self-effect with an `OnConsume` condition; the skill consumes it. The resulting
+    /// `TriggeredEffect` MUST be surfaced in `HitOutcome.triggered` (previously it was dropped
+    /// when `use_skill_against`'s `SkillResult.triggered_effects` was ignored).
+    #[test]
+    fn on_consume_trigger_is_surfaced_in_hit_outcome() {
+        use stat_core::{EffectCondition, EffectTrigger};
+
+        stat_core::config::ensure_constants_initialized();
+        // A skill that consumes the caster's "charged" self-effect on use.
+        let toml = r#"
+[[skills]]
+id = "discharge_strike"
+name = "Discharge Strike"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+consumes_self_effect = [{ id = "charged" }]
+[skills.damage]
+base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
+"#;
+        let registry = stat_core::config::parse_skills(toml).unwrap();
+        let skill = registry.get("discharge_strike").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        // Place a "charged" effect on the caster carrying an OnConsume -> "static_discharge" trigger.
+        let mut charged = Effect::stat_buff("charged", "Charged", 999.0, vec![]);
+        charged.conditions = vec![EffectCondition {
+            trigger_skill: "static_discharge".to_string(),
+            trigger: EffectTrigger::OnConsume,
+        }];
+        caster.add_effect(charged);
+
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 100.0;
+        target.current_life = 100.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(5);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+
+        assert!(
+            outcome
+                .triggered
+                .iter()
+                .any(|t| t.skill_id == "static_discharge" && t.effect_id == "charged"),
+            "OnConsume trigger for 'charged' must be surfaced in HitOutcome.triggered, got {:?}",
+            outcome.triggered
+        );
     }
 
     #[test]
