@@ -104,28 +104,35 @@ fn load_timelines(asset_server: Res<AssetServer>, mut handles: ResMut<CastTimeli
 
 ### Spawn a combatant
 
+Use `make_combatant` (from `ObeliskCommandsExt`) to insert `Combatant + Attributes + ObeliskId`
+in one call. `ObeliskId` is derived automatically from `StatBlock.id`, so the two can never drift.
+
 ```rust
-use obelisk_bevy::prelude::{Combatant, Attributes, Faction, ObeliskId, insert_hurtbox};
+use obelisk_bevy::prelude::*;
 
 fn spawn_player(mut commands: Commands) {
-    let mut stat_block = stat_core::StatBlock::with_id("player");
-    stat_block.max_life.base = 200.0;
-    stat_block.current_life = 200.0;
-    stat_block.max_mana.base = 100.0;
-    stat_block.current_mana = 100.0;
+    let mut stats = stat_core::StatBlock::with_id("player");
+    stats.max_life.base = 200.0;
+    stats.current_life = 200.0;
+    stats.max_mana.base = 100.0;
+    stats.current_mana = 100.0;
 
-    let player = commands.spawn((
-        Combatant,
-        Attributes(stat_block),
-        Faction::Player,
-        ObeliskId("player".into()),
-        Transform::default(),
-    )).id();
+    let player = commands
+        .spawn_empty()
+        .make_combatant(stats)      // inserts Combatant + Attributes + ObeliskId (derived from stats.id)
+        .insert(Faction::Player)    // override the default Faction
+        .grant_skill("firebolt")
+        .id();
 
     // Attach a hurtbox (Avian3d sensor collider) so this entity can be hit.
     insert_hurtbox(&mut commands, player, 0.5, Vec3::ZERO);
 }
 ```
+
+> **Replication invariant:** `ObeliskId` must equal the entity's `StatBlock.id`. The netcode
+> egress uses `ObeliskId` as the stable wire id when mapping `Entity → String` in `NetEvent`
+> payloads. `make_combatant` enforces this automatically. If you ever insert `Attributes` and
+> `ObeliskId` by hand, keep them in sync.
 
 ### Cast a skill
 
