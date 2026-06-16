@@ -27,6 +27,7 @@ pub fn targeting_range(targeting: &CastTargeting) -> Option<f32> {
 pub fn validate_casts(
     mut commands: Commands,
     pending: Query<(Entity, &PendingCast)>,
+    active: Query<(), With<ActiveCast>>,
     casters: Query<&Attributes>,
     registry: Res<SkillRegistry>,
     handles: Res<CastTimelineHandles>,
@@ -38,6 +39,15 @@ pub fn validate_casts(
 ) {
     for (caster, req) in &pending {
         commands.entity(caster).remove::<PendingCast>();
+
+        if active.get(caster).is_ok() {
+            commands.trigger(CastRejected {
+                caster,
+                skill_id: req.skill_id.clone(),
+                reason: CastRejectReason::AlreadyCasting,
+            });
+            continue;
+        }
 
         let Some(skill) = registry.0.get(&req.skill_id) else {
             commands.trigger(CastRejected {

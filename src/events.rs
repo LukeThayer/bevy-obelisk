@@ -24,6 +24,7 @@ pub enum CastRejectReason {
     NoTarget,
     NoLineOfSight,
     OnCooldown,
+    AlreadyCasting,
 }
 
 #[derive(Event, Clone, Debug)]
