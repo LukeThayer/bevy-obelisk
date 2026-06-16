@@ -28,3 +28,7 @@ tables_core = { path = "../obelisk/tables_core" }
 # enable the in-crate test helpers when running tests
 obelisk-bevy = { path = ".", features = ["test-support"] }
 serde_json = "1"
+# headless render-to-PNG examples (screenshot spike + renderer): the main<->render world
+# readback channel needs a Sync Receiver; std::sync::mpsc::Receiver is !Sync, so use
+# crossbeam-channel exactly like Bevy's headless_renderer example (already a transitive dep).
+crossbeam-channel = "0.5"
