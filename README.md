@@ -272,6 +272,89 @@ cargo run --example headless_server --no-default-features
 
 obelisk-bevy provides the **authoritative serializable event stream**; the game chooses its own transport. Drop-in options include [`bevy_replicon`](https://github.com/projectharmonia/bevy_replicon) and [`lightyear`](https://github.com/cBournhonesque/lightyear) — both accept custom serialized message types.
 
+## VFX cues
+
+Skills author a `vfx_cues` map in their `.cast.ron`; keys are slots (`on_cast`, `on_hit`,
+`on_window_<window_id>`) and values are game-side cue ids. At the corresponding moment the
+sim emits `CueEvent { cue_id, source, position, kind }` via `commands.trigger`. The
+presentation layer binds handlers using `ObeliskCueExt`:
+
+```rust
+use obelisk_bevy::prelude::{ObeliskCueExt, CueEvent};
+
+app.observe_cue("firebolt_impact", |cue: &CueEvent, commands: &mut Commands| {
+    // spawn a particle or sound at cue.position, anchored to cue.source
+});
+```
+
+Example firebolt timeline with authored cues:
+
+```ron
+(
+  skill_id: "firebolt",
+  phase_durations: ( windup: 0.3, active: 0.1, recovery: 0.2 ),
+  vfx_cues: {
+    "on_cast":  "firebolt_cast",
+    "on_hit":   "firebolt_impact",
+  },
+  collision_windows: [ /* ... */ ],
+  targeting: SingleEntity( range: 15.0 ),
+  delivery: Projectile( speed: 20.0 ),
+)
+```
+
+`CueKind` distinguishes when the cue fired: `OnCast`, `OnHit`, or `OnWindow`. Servers that
+don't need VFX simply don't call `observe_cue` — `CueEvent` is cheap and fire-and-forget.
+
+## Content
+
+### Skill tree / gear → stats
+
+Rebuild a combatant's `StatBlock` from any set of `StatSource`s (passive tree nodes, gear
+sockets, buffs) using `apply_stat_sources`:
+
+```rust
+use obelisk_bevy::prelude::ObeliskCommandsExt;
+
+commands.entity(player).apply_stat_sources(vec![
+    Box::new(tree.to_stat_source()),
+    Box::new(gear_socket.to_stat_source()),
+]);
+```
+
+This replaces the entity's accumulated stats and recomputes derived values in one call.
+
+### Loot on death
+
+Insert a `DropTables` resource containing a `tables_core::DropTableRegistry`, then tag
+enemies with a `DropTableId` component. When an entity with that component dies, the sim
+rolls its table and emits `LootDropped { source, drops }` (where `drops` is a
+`Vec<tables_core::Drop>`):
+
+```rust
+use obelisk_bevy::prelude::{DropTables, DropTableId, LootDropped};
+
+// At startup — insert your drop table registry.
+app.insert_resource(DropTables(my_registry));
+
+// When spawning an enemy:
+commands.spawn((
+    Combatant,
+    // ...
+    DropTableId("goblin".into()),
+));
+
+// Observe drops:
+app.add_observer(|ev: On<LootDropped>| {
+    for drop in &ev.event().drops {
+        println!("Dropped: {:?}", drop);
+    }
+});
+```
+
+Optionally insert an `ItemGenerator` resource (`loot_core::Generator`) to turn raw item
+drops into fully-generated `Item`s with affixes and implicits.
+
 ## License
 
 MIT

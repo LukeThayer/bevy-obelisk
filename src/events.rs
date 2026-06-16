@@ -114,7 +114,11 @@ pub struct LootDropped {
 pub use stat_core::Effect as ObeliskEffect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CueKind { OnCast, OnWindow, OnHit }
+pub enum CueKind {
+    OnCast,
+    OnWindow,
+    OnHit,
+}
 
 /// A VFX/audio cue fired by a skill at a moment in its timeline. The presentation layer
 /// (or game) binds `cue_id` to a handler via `App::observe_cue`.

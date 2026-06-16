@@ -80,7 +80,8 @@ mod tests {
         #[derive(Resource, Default)]
         struct Ticks(usize);
         t.app.init_resource::<Ticks>();
-        t.app.add_observer(|_e: On<DotTicked>, mut c: ResMut<Ticks>| c.0 += 1);
+        t.app
+            .add_observer(|_e: On<DotTicked>, mut c: ResMut<Ticks>| c.0 += 1);
         t.advance_ticks(120);
         assert_eq!(
             t.app.world().resource::<Ticks>().0,

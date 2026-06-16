@@ -1,6 +1,6 @@
-use bevy::prelude::*;
 use crate::core::config::CombatRng;
 use crate::events::{EntityDied, LootDropped};
+use bevy::prelude::*;
 
 /// Drop tables (from `tables_core`). Insert this resource when you have loot config.
 #[derive(Resource)]
@@ -24,10 +24,15 @@ pub fn roll_drops_on_death(
 ) {
     let Some(tables) = tables else { return };
     let target = death.event().target;
-    let Ok(table_id) = drop_ids.get(target) else { return };
+    let Ok(table_id) = drop_ids.get(target) else {
+        return;
+    };
     if let Ok(drops) = tables.0.roll(&table_id.0, 1.0, 1.0, 1, &mut rng.0) {
         if !drops.is_empty() {
-            commands.trigger(LootDropped { source: target, drops });
+            commands.trigger(LootDropped {
+                source: target,
+                drops,
+            });
         }
     }
 }
