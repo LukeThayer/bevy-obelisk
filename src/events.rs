@@ -14,7 +14,7 @@ pub struct CastRejected {
     pub reason: CastRejectReason,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CastRejectReason {
     UnknownSkill,
     TimelineMissing,
