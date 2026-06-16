@@ -1,0 +1,9 @@
+id = "static_discharge"
+name = "Static Discharge"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+
+[damage]
+base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]

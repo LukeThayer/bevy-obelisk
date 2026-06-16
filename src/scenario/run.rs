@@ -26,6 +26,19 @@ pub fn run_scenario(scenario: &Scenario) -> Trace {
         .insert_resource(RecordNet(scenario.record_net));
     app.add_obelisk_skills(SkillSource::Dir("tests/fixtures/skills".into()));
     app.seed_combat_rng(scenario.seed);
+
+    // Loot: if any actor rolls a drop table on death, load the drop-table registry so the
+    // loot system has something to roll. Gated on actors actually declaring a drop_table so
+    // non-loot scenarios are unaffected. (`spawn_actor` already inserts the `DropTableId`.)
+    if scenario.actors.iter().any(|a| a.drop_table.is_some()) {
+        let goblin_toml = std::fs::read_to_string("tests/fixtures/loot/goblin.toml")
+            .expect("read goblin drop-table fixture");
+        let registry =
+            tables_core::DropTableRegistry::load_from_strings(&[("goblin.toml", &goblin_toml)])
+                .expect("load drop table");
+        app.insert_resource(crate::loot::DropTables(registry));
+    }
+
     app.finish();
     app.cleanup();
 

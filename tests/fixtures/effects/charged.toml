@@ -1,0 +1,8 @@
+id = "charged"
+name = "Charged"
+duration = "infinite"
+is_debuff = false
+
+[[conditions]]
+type = "on_consume"
+trigger_skill = "static_discharge"

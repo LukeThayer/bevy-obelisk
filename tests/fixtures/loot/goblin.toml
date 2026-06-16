@@ -1,0 +1,11 @@
+[table]
+id = "goblin"
+
+[[table.rolls]]
+count = 1
+weight = 1
+
+[[entries]]
+type = "currency"
+weight = 1
+id = "gold"

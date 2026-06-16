@@ -1,0 +1,15 @@
+   2	CastBegan	caster=player skill=firebolt_cd dur=0.600
+   2	Cue	cue=firebolt_cast source=player kind=OnCast
+   2	CooldownStarted	caster=player skill=firebolt_cd dur=2.000
+  19	CastPhase	caster=player skill=firebolt_cd Windup->Active
+  19	HitWindow	caster=player skill=firebolt_cd window=bolt
+  21	HitConfirmed	caster=player target=dummy skill=firebolt_cd
+  21	Cue	cue=firebolt_impact source=dummy kind=OnHit
+  21	Damage	caster=player target=dummy skill=firebolt_cd dmg=20.000 kill=false life_after=5.000
+  21	EffectApplied	target=dummy effect=burn dur=5.000 stacks=1
+  25	CastPhase	caster=player skill=firebolt_cd Active->Recovery
+  37	CastPhase	caster=player skill=firebolt_cd Recovery->Done
+  46	CastRejected	caster=player skill=firebolt_cd reason=OnCooldown
+  50	DotTicked	target=dummy dmg=2.500 life=2.500
+  80	DotTicked	target=dummy dmg=2.500 life=0.000
+  80	Died	target=dummy killer=none

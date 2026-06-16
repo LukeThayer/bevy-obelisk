@@ -1,0 +1,10 @@
+id = "discharge_strike"
+name = "Discharge Strike"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+consumes_self_effect = [{ id = "charged" }]
+
+[damage]
+base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]

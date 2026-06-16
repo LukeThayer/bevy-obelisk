@@ -187,6 +187,111 @@ pub fn apply_effect() -> Scenario {
         )
 }
 
+/// Cooldown gate: the player casts a cooldown-bearing firebolt variant (`firebolt_cd`,
+/// `cooldown = 2.0` → 120 ticks at 60 Hz), then casts again AFTER the first cast finishes
+/// (the firebolt cast resolves to Done by ~tick 37) but while the skill is still on cooldown.
+/// Expect a `CooldownStarted dur=2.000` on the first cast and a `CastRejected reason=OnCooldown`
+/// on the second. (The second cast is intentionally scheduled past the first cast's recovery so
+/// the gate that fires is `OnCooldown`, not the earlier `AlreadyCasting` concurrent-cast gate.)
+/// The first cast still kills the dummy (firebolt_cd is mechanically identical to firebolt aside
+/// from the cooldown), so the golden also carries the usual hit/damage/death trace — the cooldown
+/// rejection is the new behavior. `firebolt_cd` is a dedicated fixture so adding a cooldown does
+/// NOT perturb the `firebolt` goldens (firebolt_kill / netcode_egress), which stay cooldown-free.
+pub fn cooldown_gate() -> Scenario {
+    Scenario::new("cooldown_gate", 42, 90)
+        .cast_asset("firebolt_cd")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt_cd")
+        .actor("dummy", Faction::Enemy, 25.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt_cd".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+        .at(
+            45,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt_cd".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Trigger cascade: the player carries a `charged` self-effect whose `OnConsume` condition
+/// triggers `static_discharge`, and casts `discharge_strike` (which `consumes_self_effect`
+/// `charged`) at a dummy. When the strike's hit confirms, the resolve funnel consumes the
+/// `charged` effect, surfaces the trigger as `TriggerFired source=player target=dummy
+/// skill=static_discharge effect=charged`, AND auto-fires `static_discharge` as a second
+/// (lightning) damage hit against the same target — the natural on-hit triggered-skill routing
+/// (`src/combat/system.rs::on_hit_confirmed`). This exercises the *surfaced + auto-fired on-hit*
+/// trigger path end-to-end through the cast pipeline; it does NOT touch the documented
+/// `on_kill`/splash/counter routing boundary, which stays deferred.
+///
+/// Fixtures authored for this scenario (no pre-existing trigger fixture exists in this repo):
+/// `discharge_strike.toml` (+ `.cast.ron`), `static_discharge.toml`, and the `charged.toml`
+/// effect with the `on_consume` condition.
+pub fn trigger_cascade() -> Scenario {
+    Scenario::new("trigger_cascade", 5, 60)
+        .cast_asset("discharge_strike")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("discharge_strike")
+        .actor(
+            "dummy",
+            Faction::Enemy,
+            200.0,
+            0.0,
+            Vec3::new(0.0, 0.0, 2.0),
+        )
+        .at(
+            1,
+            Action::ApplyEffect {
+                target: "player".into(),
+                effect: "charged".into(),
+            },
+        )
+        .at(
+            3,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "discharge_strike".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Loot on death: a goblin enemy carrying `with_drop_table("goblin")` is killed by firebolt.
+/// `run_scenario` loads the `goblin` drop table into `DropTables` (because an actor declares a
+/// drop table), and `roll_drops_on_death` rolls it on the goblin's death — deterministically,
+/// off the seeded `CombatRng` — emitting a `Loot source=goblin drops=[...]` line. Mirrors
+/// `tests/vfx_content.rs::dead_enemy_with_a_drop_table_drops_loot` but driven through the full
+/// cast pipeline (a real firebolt kill) rather than a synthetic `EntityDied` trigger.
+pub fn loot_on_death() -> Scenario {
+    Scenario::new("loot_on_death", 7, 600)
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .actor(
+            "goblin",
+            Faction::Enemy,
+            25.0,
+            0.0,
+            Vec3::new(0.0, 0.0, 2.0),
+        )
+        .with_drop_table("goblin")
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("goblin".into()),
+            },
+        )
+}
+
 /// Netcode egress: identical to `firebolt_kill` but recording the buffered `NetEvent`
 /// wire stream into the trace. The golden additionally contains `Net` lines carrying the
 /// stable String ids (the replication egress).
@@ -217,8 +322,10 @@ pub fn netcode_egress() -> Scenario {
 ///   `firebolt_kill` (and `netcode_egress`), so a dedicated scenario would be redundant.
 /// - `stat_sources`: covered by the existing `src/verbs.rs` unit test.
 ///
-/// Deferred to batch B (need new fixtures / a `DropTables` runner extension):
-/// `cooldown_gate`, `trigger_cascade`, `loot_on_death`.
+/// Batch B (fixture-dependent) scenarios — `cooldown_gate`, `trigger_cascade`, `loot_on_death` —
+/// are now included; they each ship dedicated fixtures (`firebolt_cd`, `discharge_strike` +
+/// `static_discharge` + `charged`, and the `goblin` drop table) so existing batch-A goldens are
+/// untouched.
 pub fn feature_matrix() -> Vec<Scenario> {
     vec![
         firebolt_kill(),
@@ -228,6 +335,9 @@ pub fn feature_matrix() -> Vec<Scenario> {
         line_of_sight(),
         already_casting(),
         apply_effect(),
+        cooldown_gate(),
+        trigger_cascade(),
+        loot_on_death(),
         netcode_egress(),
     ]
 }
