@@ -4,6 +4,8 @@ use obelisk_bevy::testkit::ObeliskTestApp;
 use obelisk_bevy::vfx::ObeliskCueExt;
 use stat_core::StatBlock;
 use std::sync::{Arc, Mutex};
+#[allow(unused_imports)]
+use tables_core;
 
 fn make_block(id: &str, life: f64, mana: f64) -> StatBlock {
     let mut b = StatBlock::with_id(id);
@@ -58,4 +60,44 @@ fn firebolt_fires_cast_and_hit_cues() {
     assert!(fired.contains(&"firebolt_cast".to_string()), "on_cast cue should fire");
     assert!(fired.contains(&"firebolt_impact".to_string()), "on_hit cue should fire");
     let _ = dummy;
+}
+
+#[test]
+fn dead_enemy_with_a_drop_table_drops_loot() {
+    use obelisk_bevy::loot::{DropTableId, DropTables};
+    let mut t = ObeliskTestApp::new(7);
+
+    let table_toml = r#"
+[table]
+id = "goblin"
+
+[[table.rolls]]
+count = 1
+weight = 1
+
+[[entries]]
+type = "currency"
+weight = 1
+id = "gold"
+"#;
+    let registry = tables_core::DropTableRegistry::load_from_strings(&[("goblin.toml", table_toml)])
+        .expect("load drop table");
+    t.app.insert_resource(DropTables(registry));
+
+    #[derive(Resource, Default)]
+    struct Loot(Vec<tables_core::Drop>);
+    t.app.init_resource::<Loot>();
+    t.app.add_observer(|e: On<obelisk_bevy::events::LootDropped>, mut l: ResMut<Loot>| {
+        l.0.extend(e.event().drops.iter().cloned());
+    });
+
+    let goblin = t.app.world_mut().spawn((
+        Combatant, Attributes(make_block("goblin", 10.0, 0.0)), Faction::Enemy, ObeliskId("goblin".into()), Transform::default(),
+        DropTableId("goblin".into()),
+    )).id();
+    t.app.update();
+    t.app.world_mut().commands().trigger(obelisk_bevy::events::EntityDied { target: goblin, killer: None });
+    t.app.update();
+
+    assert!(!t.app.world().resource::<Loot>().0.is_empty(), "a dead enemy with a drop table should drop loot");
 }

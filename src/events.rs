@@ -103,6 +103,14 @@ pub struct EntityDied {
     pub killer: Option<Entity>,
 }
 
+#[derive(Event, Clone, Debug)]
+pub struct LootDropped {
+    /// The entity that died and dropped loot.
+    pub source: Entity,
+    /// The rolled drops (item base types, currencies, uniques).
+    pub drops: Vec<tables_core::Drop>,
+}
+
 pub use stat_core::Effect as ObeliskEffect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

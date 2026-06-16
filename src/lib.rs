@@ -76,6 +76,7 @@ pub mod combat;
 pub mod core;
 pub mod events;
 pub mod facade;
+pub mod loot;
 pub mod ids;
 pub mod net;
 pub mod prelude;
@@ -107,7 +108,8 @@ impl Plugin for ObeliskSimPlugin {
             .add_plugins(core::ObeliskCorePlugin)
             .add_plugins(combat::ObeliskCombatPlugin)
             .add_plugins(net::ObeliskNetPlugin)
-            .add_plugins(vfx::ObeliskCuePlugin);
+            .add_plugins(vfx::ObeliskCuePlugin)
+            .add_plugins(loot::ObeliskLootPlugin);
 
         app.configure_sets(
             FixedUpdate,
