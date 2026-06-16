@@ -62,6 +62,13 @@ pub fn run_scenario(scenario: &Scenario) -> Trace {
     }
     app.update(); // flush spawns + register hurtboxes
 
+    // The cast-asset poll loop above runs a variable number of `app.update()` calls (it
+    // depends on asset-load timing), each of which advances the tick counter. Reset it to 0
+    // here so recorded ticks are scenario-relative and the golden trace is deterministic.
+    app.world_mut()
+        .resource_mut::<crate::scenario::trace::TickCounter>()
+        .0 = 0;
+
     // run the fixed-tick loop, applying script steps (keyed by scenario-relative tick) before advancing.
     for step_offset in 0..scenario.ticks {
         let actions: Vec<Action> = scenario
