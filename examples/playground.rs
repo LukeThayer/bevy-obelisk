@@ -5,10 +5,11 @@
 //!   cargo run --example playground --features debug-gizmos
 //!
 //! Controls:
-//!   1-9   spawn + replay `feature_matrix()[i-1]` (despawns the prior scenario actors, spawns
-//!         the selected scenario's actors, then plays its script via a fixed-tick runner).
-//!   Space free-cast the player's first skill at the nearest enemy (via `ObeliskSpatial`).
-//!   R     reset (despawn all scenario actors + stop the active runner).
+//!   1-9 0 -  spawn + replay the matching `feature_matrix()` scenario (keys `1`-`9`, then `0`
+//!            and `-` for the 10th and 11th). Despawns the prior scenario's actors, spawns the
+//!            selected scenario's actors, then plays its script via a fixed-tick runner.
+//!   Space    free-cast the player's first skill at the nearest enemy (via `ObeliskSpatial`).
+//!   R        reset (despawn all scenario actors + stop the active runner).
 //!
 //! The presentation is supplied entirely by `ObeliskDebugVizPlugin` (brought in by
 //! `ObeliskPlugins` under the `present` feature): projectile mesh, hit/death material reactions,
@@ -107,12 +108,10 @@ fn setup_scene(mut commands: Commands, library: Res<ScenarioLibrary>) {
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    info!(
-        "playground ready — press 1-{} to play a scenario, Space to free-cast, R to reset.",
-        library.0.len().min(9)
-    );
-    for (i, s) in library.0.iter().enumerate().take(9) {
-        info!("  [{}] {}", i + 1, s.name);
+    info!("playground ready — press a scenario key (1-9, 0, -), Space to free-cast, R to reset.");
+    for (i, s) in library.0.iter().enumerate() {
+        let label = KEY_LABELS.get(i).copied().unwrap_or("?");
+        info!("  [{}] {}", label, s.name);
     }
 
     // Loot scenarios need a drop-table registry to roll on death. Load the goblin fixture once
@@ -172,7 +171,9 @@ fn poll_cast_assets(
 // Scenario picker
 // ----------------------------------------------------------------------------------------------
 
-const DIGIT_KEYS: [KeyCode; 9] = [
+/// Selection keys, one per scenario slot. `feature_matrix()` currently has 11 scenarios, so the
+/// 10th and 11th map to `0` and `-` after `1`-`9`. Parallel to `KEY_LABELS`.
+const DIGIT_KEYS: [KeyCode; 11] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
     KeyCode::Digit3,
@@ -182,9 +183,14 @@ const DIGIT_KEYS: [KeyCode; 9] = [
     KeyCode::Digit7,
     KeyCode::Digit8,
     KeyCode::Digit9,
+    KeyCode::Digit0,
+    KeyCode::Minus,
 ];
 
-/// Number keys 1-9 select + start the matching scenario.
+/// Human-readable label for each selection key, parallel to `DIGIT_KEYS`.
+const KEY_LABELS: [&str; 11] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"];
+
+/// Selection keys (`1`-`9`, `0`, `-`) select + start the matching scenario.
 fn handle_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -204,7 +210,11 @@ fn handle_input(
     // Despawn the prior scenario's actors/obstacles.
     despawn_scenario(&mut commands, &existing);
 
-    info!("playing scenario [{}]: {}", index + 1, scenario.name);
+    info!(
+        "playing scenario [{}]: {}",
+        KEY_LABELS.get(index).copied().unwrap_or("?"),
+        scenario.name
+    );
 
     // Spawn this scenario's actors with a visible mesh + material (the debug-viz reactions mutate
     // each combatant's own material, so they need one).

@@ -85,8 +85,9 @@ the windowed playground to see the HUD. Defaults: `--scenario firebolt_kill --ti
 ```bash
 cargo run --example playground --features debug-gizmos
 ```
-Number keys `1`-`9` pick + replay `feature_matrix()[i-1]`, `Space` free-casts the player's first
-skill at the nearest enemy (via `ObeliskSpatial`), `R` resets. The debug-viz layer
+Selection keys `1`-`9`, then `0` and `-` (one per `feature_matrix()` scenario — 11 in all) pick +
+replay a scenario, `Space` free-casts the player's first skill at the nearest enemy (via
+`ObeliskSpatial`), `R` resets. The debug-viz layer
 (`src/present/debug_viz.rs`) draws the gizmos (hurtbox/hitbox/cone/cast-ring, under `debug-gizmos`),
 the projectile mesh + hit/death reactions, and the HUD (roster + event log + floating damage, under
 `present`). The agent can't drive the window — use the screenshot renderer to corroborate.
