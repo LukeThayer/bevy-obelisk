@@ -14,11 +14,32 @@ pub struct ItemGenerator(pub loot_core::Generator);
 #[derive(Component, Clone, Debug)]
 pub struct DropTableId(pub String);
 
+/// Per-entity loot roll parameters (rarity / quantity multipliers + area level) for the entity's
+/// drop-table roll on death. Absent ⇒ the roll uses the defaults (`rarity_mult` / `quantity_mult`
+/// = 1.0, `level` = 1), preserving the original `roll_drops_on_death` behavior.
+#[derive(Component, Clone, Debug)]
+pub struct DropRollParams {
+    pub rarity_mult: f64,
+    pub quantity_mult: f64,
+    pub level: u32,
+}
+
+impl Default for DropRollParams {
+    fn default() -> Self {
+        Self {
+            rarity_mult: 1.0,
+            quantity_mult: 1.0,
+            level: 1,
+        }
+    }
+}
+
 /// On death, roll the dead entity's drop table (if any) and emit `LootDropped`.
 pub fn roll_drops_on_death(
     death: On<EntityDied>,
     tables: Option<Res<DropTables>>,
     drop_ids: Query<&DropTableId>,
+    roll_params: Query<&DropRollParams>,
     mut rng: ResMut<CombatRng>,
     mut commands: Commands,
 ) {
@@ -27,7 +48,15 @@ pub fn roll_drops_on_death(
     let Ok(table_id) = drop_ids.get(target) else {
         return;
     };
-    if let Ok(drops) = tables.0.roll(&table_id.0, 1.0, 1.0, 1, &mut rng.0) {
+    // Per-entity roll params if present; otherwise the original defaults (1.0 / 1.0 / level 1).
+    let params = roll_params.get(target).cloned().unwrap_or_default();
+    if let Ok(drops) = tables.0.roll(
+        &table_id.0,
+        params.rarity_mult,
+        params.quantity_mult,
+        params.level,
+        &mut rng.0,
+    ) {
         if !drops.is_empty() {
             commands.trigger(LootDropped {
                 source: target,

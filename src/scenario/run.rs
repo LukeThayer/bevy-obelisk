@@ -31,11 +31,42 @@ pub fn run_scenario(scenario: &Scenario) -> Trace {
     // loot system has something to roll. Gated on actors actually declaring a drop_table so
     // non-loot scenarios are unaffected. (`spawn_actor` already inserts the `DropTableId`.)
     if scenario.actors.iter().any(|a| a.drop_table.is_some()) {
-        let goblin_toml = std::fs::read_to_string("tests/fixtures/loot/goblin.toml")
-            .expect("read goblin drop-table fixture");
+        // Load the scenario's declared fixture MAP (table name -> fixture file). When the scenario
+        // declares no fixtures, fall back to the legacy single `goblin.toml` load so existing loot
+        // scenarios stay byte-identical. The `load_from_strings` key must be `.toml`-suffixed.
+        let fixtures: Vec<(String, String)> = if scenario.drop_table_fixtures.is_empty() {
+            vec![(
+                "goblin.toml".to_string(),
+                "tests/fixtures/loot/goblin.toml".to_string(),
+            )]
+        } else {
+            scenario
+                .drop_table_fixtures
+                .iter()
+                .map(|(name, path)| {
+                    let key = if name.ends_with(".toml") {
+                        name.clone()
+                    } else {
+                        format!("{name}.toml")
+                    };
+                    (key, path.clone())
+                })
+                .collect()
+        };
+        let contents: Vec<(String, String)> = fixtures
+            .iter()
+            .map(|(key, path)| {
+                let toml = std::fs::read_to_string(path)
+                    .unwrap_or_else(|e| panic!("read drop-table fixture {path}: {e}"));
+                (key.clone(), toml)
+            })
+            .collect();
+        let pairs: Vec<(&str, &str)> = contents
+            .iter()
+            .map(|(key, toml)| (key.as_str(), toml.as_str()))
+            .collect();
         let registry =
-            tables_core::DropTableRegistry::load_from_strings(&[("goblin.toml", &goblin_toml)])
-                .expect("load drop table");
+            tables_core::DropTableRegistry::load_from_strings(&pairs).expect("load drop table(s)");
         app.insert_resource(crate::loot::DropTables(registry));
     }
 

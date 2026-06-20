@@ -5,7 +5,7 @@ pub use crate::core::cooldown::Cooldowns;
 pub use crate::events::*;
 pub use crate::facade::{ObeliskCombat, ObeliskRead, ObeliskSpatial};
 pub use crate::ids::{ObeliskEntityIndex, ObeliskId};
-pub use crate::loot::{DropTableId, DropTables, ItemGenerator};
+pub use crate::loot::{DropRollParams, DropTableId, DropTables, ItemGenerator};
 pub use crate::net::NetEvent;
 pub use crate::spatial::boxes::{insert_hurtbox, Hitbox, Hurtbox};
 pub use crate::timeline::cast::{CastAim, CastSkillExt};

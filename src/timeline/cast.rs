@@ -23,6 +23,11 @@ pub trait CastSkillExt {
     fn cast_skill_at(&mut self, skill_id: impl Into<String>, target: Entity) -> &mut Self;
     fn cast_skill_at_point(&mut self, skill_id: impl Into<String>, point: Vec3) -> &mut Self;
     fn cast_skill_dir(&mut self, skill_id: impl Into<String>, dir: Dir3) -> &mut Self;
+    /// Interrupt this entity's in-flight cast: cancels any `ActiveCast` and any still-pending
+    /// `PendingCast` (so no further hit windows open / damage resolves for that cast). No-op if
+    /// the entity is not casting. Mirrors the internal cancel done by `advance_casts` on
+    /// completion (`remove::<ActiveCast>` / `remove::<PendingCast>`).
+    fn interrupt_cast(&mut self) -> &mut Self;
 }
 
 impl CastSkillExt for EntityCommands<'_> {
@@ -45,6 +50,10 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Direction(dir),
         });
+        self
+    }
+    fn interrupt_cast(&mut self) -> &mut Self {
+        self.remove::<(super::state::ActiveCast, PendingCast)>();
         self
     }
 }

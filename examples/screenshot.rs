@@ -425,6 +425,32 @@ fn apply_action(
                 MeshMaterial3d(mats.add(Color::srgb(0.5, 0.5, 0.55))),
             ));
         }
+        Action::Interrupt { id } => {
+            if let Some(e) = index.entity(id) {
+                commands.entity(e).interrupt_cast();
+            }
+        }
+        Action::ApplyStatSources { id, stats } => {
+            if let Some(e) = index.entity(id) {
+                commands
+                    .entity(e)
+                    .apply_stat_sources(vec![Box::new(DemoStatSource(stats.clone()))]);
+            }
+        }
+    }
+}
+
+/// A `StatSource` for the example's `Action::ApplyStatSources` (flows `(StatType, value)` mods
+/// through obelisk's real rebuild path — mirrors the scenario harness's private source).
+struct DemoStatSource(Vec<(stat_core::StatType, f64)>);
+impl stat_core::source::StatSource for DemoStatSource {
+    fn id(&self) -> &str {
+        "demo_stats"
+    }
+    fn apply(&self, stats: &mut stat_core::stat_block::StatAccumulator) {
+        for (stat, value) in &self.0 {
+            stats.apply_stat_type(stat.clone(), *value);
+        }
     }
 }
 

@@ -47,6 +47,18 @@ pub enum Action {
         pos: Vec3,
         radius: f32,
     },
+    /// Interrupt the entity's in-flight cast (cancels any `ActiveCast` / `PendingCast`) via the
+    /// public `interrupt_cast` verb. No-op if the entity isn't casting.
+    Interrupt {
+        id: String,
+    },
+    /// Apply custom `(StatType, value)` modifiers to the entity mid-scenario, flowed through
+    /// obelisk's REAL stat-rebuild path (the same `ScenarioStatSource` mechanism used at spawn in
+    /// `ActorSpec::stat_block()`). `Vec<(StatType, f64)>` is `Clone`, so `Action` stays `Clone`.
+    ApplyStatSources {
+        id: String,
+        stats: Vec<(StatType, f64)>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +77,11 @@ pub struct ActorSpec {
     pub pos: Vec3,
     pub skills: Vec<String>,
     pub drop_table: Option<String>,
+    /// Loot roll parameters for this actor's drop table (threaded into the loot system via a
+    /// `DropRollParams` component). `None` falls back to the loot defaults (level 1, mults 1.0).
+    pub level: Option<u32>,
+    pub rarity_mult: Option<f64>,
+    pub quantity_mult: Option<f64>,
     pub hurtbox_radius: f32,
     /// Custom stat modifiers ((StatType, value) pairs) flowed through obelisk's REAL
     /// stat-rebuild path in `stat_block()`. Empty by default (no-op for existing scenarios).
@@ -127,6 +144,10 @@ pub struct Scenario {
     /// metadata (shown in the playground info panel); never recorded into a `Trace`, so it cannot
     /// perturb any golden.
     pub description: String,
+    /// Drop-table fixtures to load: `(table name, fixture file path)`. Empty by default; when
+    /// empty, `run_scenario` falls back to the legacy single `goblin.toml` load so existing
+    /// loot scenarios are byte-identical. Lets scenarios reach other / nested drop tables.
+    pub drop_table_fixtures: Vec<(String, String)>,
 }
 
 impl Scenario {
@@ -140,6 +161,7 @@ impl Scenario {
             record_net: false,
             cast_assets: vec![],
             description: String::new(),
+            drop_table_fixtures: vec![],
         }
     }
     pub fn actor(
@@ -158,6 +180,9 @@ impl Scenario {
             pos,
             skills: vec![],
             drop_table: None,
+            level: None,
+            rarity_mult: None,
+            quantity_mult: None,
             hurtbox_radius: 0.6,
             stats: vec![],
             self_effects: vec![],
@@ -190,6 +215,34 @@ impl Scenario {
         if let Some(a) = self.actors.last_mut() {
             a.drop_table = Some(table.into());
         }
+        self
+    }
+    /// Set the drop-table area level for the last-added actor's loot roll (`None` ⇒ default 1).
+    pub fn with_level(mut self, level: u32) -> Self {
+        if let Some(a) = self.actors.last_mut() {
+            a.level = Some(level);
+        }
+        self
+    }
+    /// Set the rarity multiplier for the last-added actor's loot roll (`None` ⇒ default 1.0).
+    pub fn with_rarity_mult(mut self, mult: f64) -> Self {
+        if let Some(a) = self.actors.last_mut() {
+            a.rarity_mult = Some(mult);
+        }
+        self
+    }
+    /// Set the quantity multiplier for the last-added actor's loot roll (`None` ⇒ default 1.0).
+    pub fn with_quantity_mult(mut self, mult: f64) -> Self {
+        if let Some(a) = self.actors.last_mut() {
+            a.quantity_mult = Some(mult);
+        }
+        self
+    }
+    /// Register a drop-table fixture file (table name ⇒ fixture path) loaded by `run_scenario`.
+    /// When none are registered the runner falls back to the default `goblin.toml` loading, so
+    /// existing loot scenarios are unaffected.
+    pub fn with_drop_table_fixture(mut self, name: &str, path: &str) -> Self {
+        self.drop_table_fixtures.push((name.into(), path.into()));
         self
     }
     pub fn at(mut self, tick: usize, action: Action) -> Self {
@@ -235,6 +288,19 @@ pub fn spawn_actor(app: &mut App, a: &ActorSpec) -> Entity {
         app.world_mut()
             .entity_mut(e)
             .insert(crate::loot::DropTableId(tbl.clone()));
+        // Only attach roll params when at least one is overridden; absent ⇒ the loot system falls
+        // back to its defaults (rarity 1.0 / quantity 1.0 / level 1), keeping existing goldens
+        // byte-identical (the loot_on_death scenario sets none).
+        if a.level.is_some() || a.rarity_mult.is_some() || a.quantity_mult.is_some() {
+            let d = crate::loot::DropRollParams::default();
+            app.world_mut()
+                .entity_mut(e)
+                .insert(crate::loot::DropRollParams {
+                    rarity_mult: a.rarity_mult.unwrap_or(d.rarity_mult),
+                    quantity_mult: a.quantity_mult.unwrap_or(d.quantity_mult),
+                    level: a.level.unwrap_or(d.level),
+                });
+        }
     }
     {
         let mut c = app.world_mut().commands();
@@ -317,6 +383,24 @@ pub fn apply_action(app: &mut App, action: &Action) {
                 Transform::from_translation(*pos),
             ));
         }
+        Action::Interrupt { id } => {
+            if let Some(e) = id_of(app, id) {
+                app.world_mut().commands().entity(e).interrupt_cast();
+            }
+        }
+        Action::ApplyStatSources { id, stats } => {
+            if let Some(e) = id_of(app, id) {
+                // Reuse the H1 stat mechanism: a `ScenarioStatSource` flowed through obelisk's
+                // real `rebuild_from_sources` path (here via the public `apply_stat_sources` verb).
+                let source = ScenarioStatSource {
+                    mods: stats.clone(),
+                };
+                app.world_mut()
+                    .commands()
+                    .entity(e)
+                    .apply_stat_sources(vec![Box::new(source)]);
+            }
+        }
     }
 }
 
@@ -386,5 +470,143 @@ mod tests {
             .actor("hero", Faction::Player, 100.0, 0.0, Vec3::ZERO)
             .with_self_effect("burn");
         assert_eq!(s.actors[0].self_effects, vec!["burn".to_string()]);
+    }
+
+    #[test]
+    fn loot_builders_thread_roll_params_onto_the_actor() {
+        let s = Scenario::new("loot_params", 1, 1)
+            .actor("goblin", Faction::Enemy, 10.0, 0.0, Vec3::ZERO)
+            .with_drop_table("goblin")
+            .with_level(42)
+            .with_rarity_mult(2.5)
+            .with_quantity_mult(3.0)
+            .with_drop_table_fixture("rare", "tests/fixtures/loot/rare.toml");
+        let a = &s.actors[0];
+        assert_eq!(a.level, Some(42));
+        assert_eq!(a.rarity_mult, Some(2.5));
+        assert_eq!(a.quantity_mult, Some(3.0));
+        assert_eq!(
+            s.drop_table_fixtures,
+            vec![(
+                "rare".to_string(),
+                "tests/fixtures/loot/rare.toml".to_string()
+            )]
+        );
+    }
+
+    /// H3: `Action::ApplyStatSources` flows `(StatType, value)` mods through obelisk's REAL
+    /// rebuild path mid-run; the computed stat on the resolved entity reflects the change.
+    /// Driven directly on a harness app (no cast timeline needed) so we can read the StatBlock back.
+    #[test]
+    fn apply_stat_sources_action_changes_a_computed_stat_mid_run() {
+        use crate::prelude::*;
+        use crate::testkit::ObeliskTestApp;
+
+        let mut t = ObeliskTestApp::new(1);
+        let spec = ActorSpec {
+            id: "target".into(),
+            faction: Faction::Enemy,
+            life: 100.0,
+            mana: 0.0,
+            pos: Vec3::ZERO,
+            skills: vec![],
+            drop_table: None,
+            level: None,
+            rarity_mult: None,
+            quantity_mult: None,
+            hurtbox_radius: 0.6,
+            stats: vec![],
+            self_effects: vec![],
+        };
+        let e = spawn_actor(&mut t.app, &spec);
+        t.app.update(); // flush spawn + sync ObeliskEntityIndex
+
+        // Baseline: no fire resistance.
+        let before = t
+            .app
+            .world()
+            .entity(e)
+            .get::<Attributes>()
+            .unwrap()
+            .0
+            .fire_resistance
+            .compute();
+        assert!(
+            before.abs() < 1e-9,
+            "baseline fire resistance (got {before})"
+        );
+
+        // Apply +30 FireResistance mid-run via the new action (resolves id via ObeliskEntityIndex).
+        apply_action(
+            &mut t.app,
+            &Action::ApplyStatSources {
+                id: "target".into(),
+                stats: vec![(StatType::FireResistance, 30.0)],
+            },
+        );
+        t.app.update(); // flush the queued apply_stat_sources command
+
+        let after = t
+            .app
+            .world()
+            .entity(e)
+            .get::<Attributes>()
+            .unwrap()
+            .0
+            .fire_resistance
+            .compute();
+        assert!(
+            (after - 30.0).abs() < 1e-9,
+            "fire resistance should reflect the +30 modifier applied mid-run (got {after})"
+        );
+    }
+
+    /// H3: `Action::Interrupt` cancels an in-flight cast during windup, so NO hit confirms / damage
+    /// resolves and the `ActiveCast` is gone. Driven through `run_scenario` (loads the firebolt
+    /// cast timeline) and asserted off the recorded trace.
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn interrupt_action_cancels_an_in_flight_cast() {
+        use crate::scenario::run::run_scenario;
+
+        // Firebolt: CastBegan ~tick 2, Windup->Active ~tick 19, HitConfirmed ~tick 21 (see golden).
+        // Cast at tick 1, interrupt at tick 5 (mid-windup, before the hit window opens).
+        let s = Scenario::new("interrupt_test", 42, 600)
+            .cast_asset("firebolt")
+            .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+            .with_skill("firebolt")
+            .actor("dummy", Faction::Enemy, 25.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+            .at(
+                1,
+                Action::Cast {
+                    caster: "player".into(),
+                    skill: "firebolt".into(),
+                    aim: Aim::Entity("dummy".into()),
+                },
+            )
+            .at(
+                5,
+                Action::Interrupt {
+                    id: "player".into(),
+                },
+            );
+
+        let trace = run_scenario(&s).to_text();
+        assert!(
+            trace.contains("CastBegan"),
+            "the cast should have begun before being interrupted:\n{trace}"
+        );
+        assert!(
+            !trace.contains("HitConfirmed"),
+            "interrupted cast must produce NO HitConfirmed:\n{trace}"
+        );
+        assert!(
+            !trace.contains("\tDamage\t") && !trace.contains("Damage\tcaster"),
+            "interrupted cast must produce NO Damage:\n{trace}"
+        );
+        assert!(
+            !trace.contains("Died"),
+            "no kill should occur after interruption:\n{trace}"
+        );
     }
 }
