@@ -1,0 +1,2 @@
+   2	CastBegan	caster=player skill=firebolt dur=0.600
+   2	Cue	cue=firebolt_cast source=player kind=OnCast

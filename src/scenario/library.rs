@@ -536,6 +536,122 @@ pub fn cast_speed_scaling() -> Scenario {
         )
 }
 
+/// Interrupt mid-windup (Batch 8, the H3 `Action::Interrupt` payoff): the player casts firebolt at a
+/// dummy at tick 1, then an `Action::Interrupt { id: "player" }` fires at tick 5 — mid-windup, BEFORE
+/// the bolt's hit window opens (firebolt windup runs to ~tick 19; see `already_casting`/`firebolt_kill`).
+/// `Action::Interrupt` routes through the public `interrupt_cast` verb (`remove::<(ActiveCast,
+/// PendingCast)>`), so the in-flight cast is genuinely cancelled. The golden shows `CastBegan` (the cast
+/// did start) and then NOTHING further for that cast: NO `CastPhase Windup->Active`, NO `HitWindow`, NO
+/// `HitConfirmed`, NO `Damage`, NO `Died` — proof the `ActiveCast` was removed before `advance_casts`
+/// could cross into the Active phase and spawn the bolt window. (The only post-cancel lines are the
+/// `OnCast` cue + the cooldown trace from the original cast-begin, which fire at cast START, before the
+/// interrupt.) Mirrors the `src/scenario/mod.rs::interrupt_action_cancels_an_in_flight_cast` unit test
+/// through the full golden pipeline.
+pub fn interrupt_cast() -> Scenario {
+    Scenario::new("interrupt_cast", 42, 60)
+        .describe("Interrupting a cast mid-windup (Action::Interrupt) cancels it: CastBegan with NO hit window, NO HitConfirmed, NO Damage, NO death afterward.")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .actor("dummy", Faction::Enemy, 25.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+        .at(
+            5,
+            Action::Interrupt {
+                id: "player".into(),
+            },
+        )
+}
+
+/// Insufficient mana (Batch 8): a player spawned with ZERO mana (firebolt costs 5 mana) casts firebolt
+/// at a dummy. `validate_casts` calls `attrs.0.can_use_skill(skill)`, which fails the mana gate, so the
+/// cast is rejected `InsufficientMana` and never enters an `ActiveCast` — the golden shows
+/// `CastRejected reason=InsufficientMana` and NO `Damage`. Mirrors
+/// `tests/vertical_slice.rs::cast_without_mana_is_rejected` as a golden (mana set via the ActorSpec mana
+/// field, the simplest reachable form; the spec's `Action::SetMana` alternative would produce the same
+/// rejection).
+pub fn cast_rejected_insufficient_mana() -> Scenario {
+    Scenario::new("cast_rejected_insufficient_mana", 1, 30)
+        .describe("A caster with too little mana for firebolt (cost 5, mana 0) is rejected (InsufficientMana) with no damage.")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 0.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Unknown skill (Batch 8): the player casts a skill id (`phantom`) that is NOT in the global
+/// `SkillRegistry` (the fixtures register only firebolt/cleave/discharge_strike/static_discharge/
+/// firebolt_cd). `apply_action`'s `Cast` only inserts a `PendingCast { skill_id: "phantom" }` — the cast
+/// verb does NOT require the skill to be granted/registered — so the request reaches `validate_casts`,
+/// where `registry.0.get("phantom")` returns `None` and the cast is rejected `UnknownSkill` (this is the
+/// FIRST gate after the already-casting check, ahead of the timeline/mana/range checks). The golden shows
+/// a single `CastRejected reason=UnknownSkill` and nothing else. Cleanly reachable through the public
+/// scenario API.
+pub fn cast_rejected_unknown_skill() -> Scenario {
+    Scenario::new("cast_rejected_unknown_skill", 1, 30)
+        .describe("Casting a skill id absent from the SkillRegistry is rejected (UnknownSkill).")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "phantom".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// No target (Batch 8): the player casts firebolt at a dummy AND the dummy is despawned at the SAME tick.
+/// The two actions apply in script order within the tick (`run_scenario` collects them in order, then
+/// runs one `app.update()`): the `Cast` action resolves the dummy's entity via `ObeliskEntityIndex` and
+/// QUEUES a `PendingCast { aim: CastAim::Entity(dummy_entity) }` (a command, flushed at the next update);
+/// the `Despawn` action then IMMEDIATELY despawns the dummy (`world_mut().entity_mut(e).despawn()`). So
+/// when `validate_casts` runs on the next update, the `PendingCast` still holds the now-stale dummy
+/// `Entity`, `transforms.get(e)` fails, and the cast is rejected `NoTarget`. This is the despawn-between-
+/// cast-request-and-resolution path: the `Cast` action must run while the target still resolves (so the
+/// `Entity` is captured), with the despawn landing before `validate_casts` reads its transform — which the
+/// queued-insert-vs-immediate-despawn ordering guarantees. The golden shows a single
+/// `CastRejected reason=NoTarget` (the caster id resolves; the despawned target id is not in the line).
+/// Cleanly reachable through the public scenario API.
+pub fn cast_rejected_no_target() -> Scenario {
+    Scenario::new("cast_rejected_no_target", 1, 30)
+        .describe("A cast whose entity target despawns the same tick (before validation reads its transform) is rejected (NoTarget).")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+        .at(
+            1,
+            Action::Despawn {
+                id: "dummy".into(),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -576,5 +692,9 @@ pub fn feature_matrix() -> Vec<Scenario> {
         crit_strike(),
         resistance_mitigates(),
         cast_speed_scaling(),
+        interrupt_cast(),
+        cast_rejected_insufficient_mana(),
+        cast_rejected_unknown_skill(),
+        cast_rejected_no_target(),
     ]
 }
