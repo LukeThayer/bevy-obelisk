@@ -403,6 +403,47 @@ pub fn on_max_stacks_triggers_and_consumes() -> Scenario {
         )
 }
 
+/// Self-buff boosts damage (Batch 3, end-to-end proof of "applying buffs to self"): the player
+/// starts with the `empower` self-buff (`+50% increased fire damage`, applied at spawn via
+/// `.with_self_effect` -> the public `apply_obelisk_effect` verb, sourced from the caster itself),
+/// then casts firebolt at a dummy. Because `use_skill_against`'s `calculate_damage` reads the
+/// caster's `global_fire_damage.increased` layer, the firebolt's 20 base fire damage is scaled to
+/// `20 * (1 + 0.50) = 30.000` — the golden's Damage line shows `dmg=30.000`, visibly HIGHER than
+/// the un-buffed baseline of `20.000` (see `firebolt_kill`). That higher number IS the observable
+/// end-to-end proof that a self-applied buff boosts outgoing damage; the computed-stat VALUE behind
+/// it is unit-tested directly in `src/verbs.rs` (`apply_obelisk_effect_modifies_computed_stat` /
+/// `self_buff_removal_reverts_stat`), since stat values are not carried in the event trace.
+///
+/// The dummy carries enough life (50) to SURVIVE the boosted 30 direct hit, so the Damage line
+/// records cleanly (kill=false) before the burn DoT finishes it — keeping the boosted number front
+/// and centre. Ships the new `empower.toml` effect fixture (no existing scenario references it, so
+/// the existing goldens are untouched).
+///
+/// NOTE: the spec offered an OPTIONAL caster-target self-buff *skill* (`empower_self`) as an
+/// alternative trigger. obelisk's skill config DOES support `target = "caster"` effect applications
+/// (`stat_core::skill::ApplicationTarget::Caster`, applied in `use_skill_against` Step 1), but a
+/// pure no-damage buff skill does not flow through the bevy cast/hit pipeline cleanly (the resolve
+/// funnel `resolve_one_hit` is hit-driven and requires a target). The `.with_self_effect` path —
+/// explicitly endorsed by the spec as still satisfying "applying buffs to self" — is the robust,
+/// deterministic choice and is used here.
+pub fn self_buff_boosts_damage() -> Scenario {
+    Scenario::new("self_buff_boosts_damage", 42, 600)
+        .describe("Self-buffing with 'empower' (+50% fire damage) before casting firebolt boosts the bolt's damage from 20 to 30 - applying a buff to self raises outgoing damage.")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .with_self_effect("empower")
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -439,5 +480,6 @@ pub fn feature_matrix() -> Vec<Scenario> {
         on_apply_triggers_skill(),
         on_expire_triggers_skill(),
         on_max_stacks_triggers_and_consumes(),
+        self_buff_boosts_damage(),
     ]
 }

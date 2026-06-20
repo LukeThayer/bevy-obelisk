@@ -214,6 +214,140 @@ mod tests {
         );
     }
 
+    /// Batch 3 (self-buffs + stat-block rebuild): applying the `empower` stat-modifier effect to an
+    /// entity via the public `apply_obelisk_effect` verb runs obelisk's apply -> `add_effect` ->
+    /// `rebuild()` round trip, so the entity's COMPUTED `global_fire_damage` increased-layer reflects
+    /// the buff. This is the direct stat-rebuild readback the golden trace can't show (the firebolt
+    /// Damage line proves the buff is *observable* end-to-end, but the computed stat VALUE itself is
+    /// not in the event trace — only here can we read the StatBlock back).
+    #[test]
+    fn apply_obelisk_effect_modifies_computed_stat() {
+        let mut t = ObeliskTestApp::new(1); // harness loads the empower effect from fixtures
+        let mut block = StatBlock::with_id("caster");
+        block.max_life.base = 100.0;
+        block.current_life = 100.0;
+        let e = t
+            .app
+            .world_mut()
+            .spawn((
+                crate::prelude::Combatant,
+                Attributes(block),
+                crate::prelude::Faction::Player,
+                ObeliskId("caster".into()),
+                Transform::default(),
+            ))
+            .id();
+        t.app.update();
+
+        // Baseline: no increased fire damage (global_fire_damage starts at base 0, increased 0).
+        let before = t
+            .app
+            .world()
+            .entity(e)
+            .get::<Attributes>()
+            .unwrap()
+            .0
+            .global_fire_damage
+            .increased;
+        assert!(
+            before.abs() < 1e-9,
+            "baseline increased fire damage should be 0 (got {before})"
+        );
+
+        // Apply the empower self-buff via the public verb (the apply -> rebuild round trip).
+        t.app
+            .world_mut()
+            .commands()
+            .entity(e)
+            .apply_obelisk_effect("empower");
+        t.app.update();
+
+        let attrs = t.app.world().entity(e).get::<Attributes>().unwrap();
+        assert!(
+            attrs.0.effects.iter().any(|ef| ef.id == "empower"),
+            "empower effect should be applied"
+        );
+        // The empower modifier (increased_fire_damage = 50) flows through rebuild into the
+        // computed global_fire_damage increased layer (value/100 = 0.50).
+        let after = attrs.0.global_fire_damage.increased;
+        assert!(
+            (after - 0.50).abs() < 1e-9,
+            "empower should raise global_fire_damage.increased to 0.50 (got {after})"
+        );
+        // And the increased multiplier the damage pipeline reads is 1.50 (the observable boost).
+        assert!(
+            (attrs.0.global_fire_damage.total_increased_multiplier() - 1.50).abs() < 1e-9,
+            "increased multiplier should be 1.50 (got {})",
+            attrs.0.global_fire_damage.total_increased_multiplier()
+        );
+    }
+
+    /// Batch 3: the buff's effect on the computed stat is REVERSIBLE. Apply a finite-duration
+    /// empower variant (`empower_brief`, 0.1s) via the public verb, confirm the computed stat rose,
+    /// then `tick_effects` past its expiry — which runs obelisk's expire -> `rebuild_from_effects`
+    /// path — and assert the computed stat REVERTS to its base value (apply -> rebuild -> expire ->
+    /// rebuild).
+    #[test]
+    fn self_buff_removal_reverts_stat() {
+        let mut t = ObeliskTestApp::new(1);
+        let mut block = StatBlock::with_id("caster");
+        block.max_life.base = 100.0;
+        block.current_life = 100.0;
+        let e = t
+            .app
+            .world_mut()
+            .spawn((
+                crate::prelude::Combatant,
+                Attributes(block),
+                crate::prelude::Faction::Player,
+                ObeliskId("caster".into()),
+                Transform::default(),
+            ))
+            .id();
+        t.app.update();
+
+        t.app
+            .world_mut()
+            .commands()
+            .entity(e)
+            .apply_obelisk_effect("empower_brief");
+        t.app.update();
+
+        // Buff is active: increased fire damage rose to 0.50.
+        let raised = t
+            .app
+            .world()
+            .entity(e)
+            .get::<Attributes>()
+            .unwrap()
+            .0
+            .global_fire_damage
+            .increased;
+        assert!(
+            (raised - 0.50).abs() < 1e-9,
+            "empower_brief should raise increased fire damage to 0.50 (got {raised})"
+        );
+
+        // Tick 1 second of effects (> the 0.1s duration): the effect expires and obelisk rebuilds.
+        {
+            let mut entity_mut = t.app.world_mut().entity_mut(e);
+            let mut attrs = entity_mut.get_mut::<Attributes>().unwrap();
+            let (ticked, _result) = attrs.0.tick_effects(1.0);
+            attrs.0 = ticked;
+        }
+
+        let attrs = t.app.world().entity(e).get::<Attributes>().unwrap();
+        assert!(
+            !attrs.0.effects.iter().any(|ef| ef.id == "empower_brief"),
+            "empower_brief should have expired"
+        );
+        let reverted = attrs.0.global_fire_damage.increased;
+        assert!(
+            reverted.abs() < 1e-9,
+            "increased fire damage should revert to base 0 after expiry (got {reverted})"
+        );
+    }
+
     #[test]
     fn make_combatant_and_grants_apply() {
         let mut t = ObeliskTestApp::new(1);

@@ -1,0 +1,11 @@
+id = "empower_brief"
+name = "Empower (Brief)"
+duration = 0.1
+is_debuff = false
+
+# A short-lived variant of `empower`: 50% increased fire damage that EXPIRES after
+# 0.1s. Used to prove the apply -> rebuild -> expire -> rebuild round trip reverts the
+# computed stat back to its base. Not referenced by any golden scenario.
+[[modifiers]]
+stat = "increased_fire_damage"
+value = 50.0

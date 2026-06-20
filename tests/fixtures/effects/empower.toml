@@ -1,0 +1,11 @@
+id = "empower"
+name = "Empower"
+duration = "infinite"
+is_debuff = false
+
+# A self-buff: 50% increased fire damage on the OWNER. Observably boosts the
+# owner's outgoing fire damage (firebolt's 20 base fire -> 30) AND is readable
+# back from the StatBlock via `global_fire_damage` for the rebuild unit test.
+[[modifiers]]
+stat = "increased_fire_damage"
+value = 50.0
