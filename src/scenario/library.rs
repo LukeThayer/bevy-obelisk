@@ -4,6 +4,7 @@ use bevy::prelude::Vec3;
 
 pub fn firebolt_kill() -> Scenario {
     Scenario::new("firebolt_kill", 42, 600)
+        .describe("Single-target projectile: the bolt flies, hits for 20, applies a burn DoT that ticks the target to death.")
         .cast_asset("firebolt")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("firebolt")
@@ -23,6 +24,9 @@ pub fn firebolt_kill() -> Scenario {
 /// Expect exactly two Damage lines (front_a, front_b); the entity behind is outside the cone.
 pub fn cone_cleave() -> Scenario {
     Scenario::new("cone_cleave", 7, 120)
+        .describe(
+            "Directional cone (cleave) hits the two enemies inside the arc but not the one behind.",
+        )
         .cast_asset("cleave")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("cleave")
@@ -62,6 +66,7 @@ pub fn cone_cleave() -> Scenario {
 /// The `Enemies` hit filter must NOT damage the ally (zero Damage lines).
 pub fn faction_filter() -> Scenario {
     Scenario::new("faction_filter", 7, 120)
+        .describe("Cleave across an ally and an enemy only damages the enemy - faction hit-filtering spares allies.")
         .cast_asset("cleave")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("cleave")
@@ -81,6 +86,9 @@ pub fn faction_filter() -> Scenario {
 /// Expect `CastRejected reason=OutOfRange` and no Damage.
 pub fn out_of_range() -> Scenario {
     Scenario::new("out_of_range", 7, 30)
+        .describe(
+            "A cast at a target beyond the skill's range is rejected (OutOfRange) with no damage.",
+        )
         .cast_asset("cleave")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("cleave")
@@ -102,6 +110,7 @@ pub fn out_of_range() -> Scenario {
 /// `CastRejected reason=NoLineOfSight` and nothing else (a clean, blocked-only golden).
 pub fn line_of_sight() -> Scenario {
     Scenario::new("line_of_sight", 1, 30)
+        .describe("An obstacle between caster and target blocks the cast (NoLineOfSight).")
         .cast_asset("firebolt")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("firebolt")
@@ -135,6 +144,7 @@ pub fn line_of_sight() -> Scenario {
 /// `AlreadyCasting`. The dummy has high life so it survives long enough for a clean golden.
 pub fn already_casting() -> Scenario {
     Scenario::new("already_casting", 1, 60)
+        .describe("A second cast issued mid-windup is rejected (AlreadyCasting).")
         .cast_asset("firebolt")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("firebolt")
@@ -170,6 +180,7 @@ pub fn already_casting() -> Scenario {
 /// damage-driven DoTs are exercised by `firebolt_kill`, where the bolt's hit seeds the burn).
 pub fn apply_effect() -> Scenario {
     Scenario::new("apply_effect", 1, 120)
+        .describe("Directly applying a burn (no triggering hit) emits EffectApplied with no DoT - zero status-damage means no ticks.")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .actor(
             "dummy",
@@ -199,6 +210,7 @@ pub fn apply_effect() -> Scenario {
 /// NOT perturb the `firebolt` goldens (firebolt_kill / netcode_egress), which stay cooldown-free.
 pub fn cooldown_gate() -> Scenario {
     Scenario::new("cooldown_gate", 42, 90)
+        .describe("After the first cast starts the cooldown, a second cast within it is rejected (OnCooldown).")
         .cast_asset("firebolt_cd")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("firebolt_cd")
@@ -236,6 +248,7 @@ pub fn cooldown_gate() -> Scenario {
 /// effect with the `on_consume` condition.
 pub fn trigger_cascade() -> Scenario {
     Scenario::new("trigger_cascade", 5, 60)
+        .describe("Hitting while 'charged' consumes the buff and fires a triggered skill (TriggerFired -> static_discharge bonus damage).")
         .cast_asset("discharge_strike")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("discharge_strike")
@@ -271,6 +284,7 @@ pub fn trigger_cascade() -> Scenario {
 /// cast pipeline (a real firebolt kill) rather than a synthetic `EntityDied` trigger.
 pub fn loot_on_death() -> Scenario {
     Scenario::new("loot_on_death", 7, 600)
+        .describe("Killing an enemy with a drop table rolls loot deterministically (LootDropped).")
         .cast_asset("firebolt")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
         .with_skill("firebolt")
@@ -297,6 +311,7 @@ pub fn loot_on_death() -> Scenario {
 /// stable String ids (the replication egress).
 pub fn netcode_egress() -> Scenario {
     Scenario::new("netcode_egress", 42, 600)
+        .describe("Like firebolt_kill but recording the buffered NetEvent egress (Net lines, stable string ids).")
         .cast_asset("firebolt")
         .recording_net()
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)

@@ -91,6 +91,10 @@ pub struct Scenario {
     pub record_net: bool,
     /// Skill ids whose `.cast.ron` must be loaded (resolved from `assets/skills/<id>.cast.ron`).
     pub cast_assets: Vec<String>,
+    /// Human-readable, self-documenting "what this scenario validates" blurb. Presentation-only
+    /// metadata (shown in the playground info panel); never recorded into a `Trace`, so it cannot
+    /// perturb any golden.
+    pub description: String,
 }
 
 impl Scenario {
@@ -103,6 +107,7 @@ impl Scenario {
             script: vec![],
             record_net: false,
             cast_assets: vec![],
+            description: String::new(),
         }
     }
     pub fn actor(
@@ -151,6 +156,12 @@ impl Scenario {
     }
     pub fn recording_net(mut self) -> Self {
         self.record_net = true;
+        self
+    }
+    /// Attach a one-line "what this scenario validates" description (presentation-only metadata,
+    /// never recorded into a `Trace`).
+    pub fn describe(mut self, description: &str) -> Self {
+        self.description = description.into();
         self
     }
 }

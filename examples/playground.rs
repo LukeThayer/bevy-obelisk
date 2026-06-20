@@ -46,7 +46,9 @@ fn main() {
     app.insert_resource(ScenarioLibrary(feature_matrix()));
     app.init_resource::<ActiveRunner>();
 
-    app.add_systems(Startup, (setup_scene, load_cast_assets));
+    app.init_resource::<ActiveScenarioInfo>();
+
+    app.add_systems(Startup, (setup_scene, setup_info_panel, load_cast_assets));
     app.add_systems(
         Update,
         (
@@ -54,6 +56,7 @@ fn main() {
             handle_input,
             free_cast_on_space,
             reset_on_key,
+            update_active_scenario_text,
         ),
     );
     // The scripted runner advances on the fixed timestep so its tick alignment matches the sim.
@@ -87,6 +90,18 @@ struct ScenarioEntity;
 /// `CastTimelineHandles` once each asset finishes loading.
 #[derive(Resource, Default)]
 struct PendingCastAssets(Vec<(String, Handle<CastTimeline>)>);
+
+/// The selected scenario's name + description, written on select (and cleared on reset). Read by
+/// `update_active_scenario_text` to refresh the info panel's dynamic line only when it changes.
+#[derive(Resource, Default)]
+struct ActiveScenarioInfo {
+    name: Option<String>,
+    description: String,
+}
+
+/// Marker for the info panel's dynamic `Text` (the active scenario name + description).
+#[derive(Component)]
+struct ActiveScenarioText;
 
 // ----------------------------------------------------------------------------------------------
 // Startup
@@ -122,6 +137,80 @@ fn setup_scene(mut commands: Commands, library: Res<ScenarioLibrary>) {
         {
             commands.insert_resource(DropTables(registry));
         }
+    }
+}
+
+/// Spawn the playground info panel (bevy_ui): a CONTROLS legend, a key->scenario list, and an
+/// (initially-hint) line for the ACTIVE scenario's name + description. Uses the same UI idioms as
+/// `present::debug_viz` (Node flex layout + Text + TextFont + TextColor). The debug-viz HUD anchors
+/// its roster top-LEFT and its event-log bottom-LEFT, so this panel anchors top-RIGHT to coexist
+/// without overlap. This panel is PLAYGROUND-LOCAL (the debug-viz plugin is scenario-agnostic).
+fn setup_info_panel(mut commands: Commands, library: Res<ScenarioLibrary>) {
+    // Build the static CONTROLS + key->scenario legend once at startup.
+    let mut legend = String::from(
+        "CONTROLS\n  1-9 / 0 / - : select scenario   |   Space: free-cast at nearest enemy   |   R: reset\n\nSCENARIOS",
+    );
+    for (i, s) in library.0.iter().enumerate() {
+        let label = KEY_LABELS.get(i).copied().unwrap_or("?");
+        legend.push_str(&format!("\n  [{label}] {}", s.name));
+    }
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(8.0),
+                top: Val::Px(8.0),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(6.0)),
+                max_width: Val::Px(440.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+        ))
+        .with_children(|panel| {
+            // Static controls + key->scenario legend.
+            panel.spawn((
+                Text::new(legend),
+                TextFont {
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.85, 0.92, 1.0)),
+            ));
+            // Dynamic active-scenario line (name + description); rebuilt on select via
+            // `update_active_scenario_text`.
+            panel.spawn((
+                ActiveScenarioText,
+                Text::new("\nACTIVE: press a scenario key to begin"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.9, 0.55)),
+            ));
+        });
+}
+
+/// Refresh the active-scenario line whenever the selection changes. Reads the name+description that
+/// `handle_input` / `reset_on_key` wrote into `ActiveScenarioInfo`, guarded by `is_changed` + a
+/// text-diff so the string is only rebuilt on an actual selection change.
+fn update_active_scenario_text(
+    info: Res<ActiveScenarioInfo>,
+    mut q: Query<&mut Text, With<ActiveScenarioText>>,
+) {
+    if !info.is_changed() {
+        return;
+    }
+    let Ok(mut text) = q.single_mut() else {
+        return;
+    };
+    let body = match &info.name {
+        Some(name) => format!("\nACTIVE: {name}\n  {}", info.description),
+        None => "\nACTIVE: press a scenario key to begin".to_string(),
+    };
+    if text.as_str() != body {
+        text.0 = body;
     }
 }
 
@@ -191,12 +280,14 @@ const DIGIT_KEYS: [KeyCode; 11] = [
 const KEY_LABELS: [&str; 11] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"];
 
 /// Selection keys (`1`-`9`, `0`, `-`) select + start the matching scenario.
+#[allow(clippy::too_many_arguments)]
 fn handle_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut runner: ResMut<ActiveRunner>,
+    mut info: ResMut<ActiveScenarioInfo>,
     library: Res<ScenarioLibrary>,
     existing: Query<Entity, With<ScenarioEntity>>,
 ) {
@@ -209,6 +300,11 @@ fn handle_input(
 
     // Despawn the prior scenario's actors/obstacles.
     despawn_scenario(&mut commands, &existing);
+
+    // Surface the selected scenario's name + description in the info panel (the active scenario
+    // carries `.description` from the library).
+    info.name = Some(scenario.name.clone());
+    info.description = scenario.description.clone();
 
     info!(
         "playing scenario [{}]: {}",
@@ -401,6 +497,7 @@ fn reset_on_key(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut runner: ResMut<ActiveRunner>,
+    mut info: ResMut<ActiveScenarioInfo>,
     existing: Query<Entity, With<ScenarioEntity>>,
 ) {
     if !keys.just_pressed(KeyCode::KeyR) {
@@ -409,6 +506,10 @@ fn reset_on_key(
     despawn_scenario(&mut commands, &existing);
     runner.scenario = None;
     runner.elapsed = 0;
+    // Clear the active-scenario line back to the hint (ResMut bumps change detection so
+    // `update_active_scenario_text` rebuilds it).
+    info.name = None;
+    info.description.clear();
     info!("reset");
 }
 
