@@ -1,6 +1,7 @@
 use crate::core::components::Faction;
 use crate::scenario::{Action, Aim, Scenario};
 use bevy::prelude::Vec3;
+use stat_core::StatType;
 
 pub fn firebolt_kill() -> Scenario {
     Scenario::new("firebolt_kill", 42, 600)
@@ -444,6 +445,97 @@ pub fn self_buff_boosts_damage() -> Scenario {
         )
 }
 
+/// Crit strike (Batch 5, the stat-attach payoff): a caster with a 100% flat critical-strike chance
+/// (`AddedCriticalChance` = 100, flowed through obelisk's real stat-rebuild path via `.with_stat`)
+/// casts firebolt at a dummy. `AddedCriticalChance` lands on `StatBlock::critical_chance.flat`
+/// (`StatAccumulator::apply_stat_type` → `critical_chance_flat`); `calculate_crit_chance` then yields
+/// `(0 base + 100 flat) * 1.0 * 1.0 = 100%`, so the seeded crit roll (`rng.gen::<f64>() < 1.0`) ALWAYS
+/// passes — a deterministic, guaranteed crit. On crit obelisk multiplies every damage by the
+/// attacker's `computed_crit_multiplier()` (default base `1.5`, no bonuses here), so the firebolt's
+/// 20 base fire damage becomes `20 * 1.5 = 30.000`. The golden's Damage line shows `crit=true` AND
+/// `dmg=30.000`, visibly higher than the un-buffed `20.000` baseline (`firebolt_kill`).
+///
+/// The dummy carries 50 life (> 30) so it SURVIVES the boosted crit hit (kill=false) and the Damage
+/// line records cleanly with the crit number front and centre, before the burn DoT finishes it.
+/// Uses `.with_stat` only — no new fixture needed (precedent: the `FireResistance` round-trip unit
+/// test in `src/scenario/mod.rs`).
+pub fn crit_strike() -> Scenario {
+    Scenario::new("crit_strike", 42, 600)
+        .describe("A caster with 100% critical-strike chance always crits firebolt: the Damage line reads crit=true and 30.000 (20 base x the 1.5 crit multiplier), up from the un-crit 20.000.")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .with_stat(StatType::AddedCriticalChance, 100.0)
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Resistance mitigates (Batch 5): a DUMMY target with 50% fire resistance (`FireResistance` = 50,
+/// flowed through obelisk's real stat-rebuild path via `.with_stat` — `FireResistance` is a flat add,
+/// landing on `StatBlock::fire_resistance`) is hit by firebolt (fire damage). obelisk's resolution
+/// mitigates fire damage by resistance (`calculate_resistance_mitigation`: `damage * (1 - resist/100)`
+/// with no penetration), so the 20 base fire damage is reduced to `20 * (1 - 0.50) = 10.000` and
+/// `10.000` is prevented. The Damage line shows `prevented=10.000` (> 0) AND `dmg=10.000`, visibly
+/// lower than the un-resisted `20.000` baseline (`firebolt_kill`). `damage_prevented` is summed from
+/// the real obelisk `CombatResult.damage_reduced_by_resists` (see `combat_result_prevented`).
+///
+/// The dummy carries 50 life (> 10) so it SURVIVES the mitigated direct hit (kill=false) and the
+/// Damage line records cleanly with the prevented amount, before the burn DoT (seeded from the full
+/// pre-mitigation fire damage) finishes it. Uses `.with_stat` only — no new fixture needed.
+pub fn resistance_mitigates() -> Scenario {
+    Scenario::new("resistance_mitigates", 42, 600)
+        .describe("A target with 50% fire resistance halves firebolt's fire damage: the Damage line reads prevented=10.000 and dmg=10.000, down from the un-resisted 20.000.")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .with_stat(StatType::FireResistance, 50.0)
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Cast-speed scaling (Batch 5, validating the timeline's speed-scaled phase durations): a caster
+/// with +100% increased cast speed (`IncreasedCastSpeed` = 100, flowed through obelisk's real
+/// stat-rebuild path via `.with_stat` — `StatAccumulator::apply_stat_type` adds `100/100 = 1.0`
+/// increased to `cast_speed`) casts firebolt. firebolt is a spell, so `effective_rate` reads
+/// `cast_speed.compute() = 1.0 * (1 + 1.0) = 2.0`; `scale_durations` then divides every authored
+/// phase duration by 2 (`validate_casts`). The authored windup/active/recovery (0.3/0.1/0.2 s =
+/// 18/6/12 ticks at 60 Hz) become 0.15/0.05/0.10 s = 9/3/6 ticks, so the cast phases and the bolt's
+/// hit window all fire at EARLIER trace ticks than the un-scaled `firebolt_kill` baseline
+/// (Windup->Active + HitWindow at tick 19, HitConfirmed at 21). The shortened ticks are computed
+/// deterministically off the fixed timestep + the rebuilt cast_speed; this is the end-to-end proof
+/// that increased cast speed shortens the timeline. Uses `.with_stat` only — no new fixture needed.
+pub fn cast_speed_scaling() -> Scenario {
+    Scenario::new("cast_speed_scaling", 42, 600)
+        .describe("A caster with +100% increased cast speed casts firebolt at 2x rate: the cast phases / hit window / hit-confirm all land at earlier (roughly halved) trace ticks than the un-scaled firebolt_kill baseline.")
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .with_stat(StatType::IncreasedCastSpeed, 100.0)
+        .actor("dummy", Faction::Enemy, 25.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -481,5 +573,8 @@ pub fn feature_matrix() -> Vec<Scenario> {
         on_expire_triggers_skill(),
         on_max_stacks_triggers_and_consumes(),
         self_buff_boosts_damage(),
+        crit_strike(),
+        resistance_mitigates(),
+        cast_speed_scaling(),
     ]
 }

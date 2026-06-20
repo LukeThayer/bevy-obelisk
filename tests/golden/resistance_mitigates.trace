@@ -1,0 +1,21 @@
+   2	CastBegan	caster=player skill=firebolt dur=0.600
+   2	Cue	cue=firebolt_cast source=player kind=OnCast
+  19	CastPhase	caster=player skill=firebolt Windup->Active
+  19	HitWindow	caster=player skill=firebolt window=bolt
+  21	HitConfirmed	caster=player target=dummy skill=firebolt
+  21	Cue	cue=firebolt_impact source=dummy kind=OnHit
+  21	Damage	caster=player target=dummy skill=firebolt dmg=10.000 kill=false life_after=40.000 crit=false prevented=10.000 life_gained=0.000 mana_gained=0.000
+  21	EffectApplied	target=dummy effect=burn dur=5.000 stacks=1
+  25	CastPhase	caster=player skill=firebolt Active->Recovery
+  37	CastPhase	caster=player skill=firebolt Recovery->Done
+  50	DotTicked	target=dummy dmg=2.500 life=37.500
+  80	DotTicked	target=dummy dmg=2.500 life=35.000
+ 110	DotTicked	target=dummy dmg=2.500 life=32.500
+ 140	DotTicked	target=dummy dmg=2.500 life=30.000
+ 170	DotTicked	target=dummy dmg=2.500 life=27.500
+ 200	DotTicked	target=dummy dmg=2.500 life=25.000
+ 230	DotTicked	target=dummy dmg=2.500 life=22.500
+ 260	DotTicked	target=dummy dmg=2.500 life=20.000
+ 290	DotTicked	target=dummy dmg=2.500 life=17.500
+ 320	DotTicked	target=dummy dmg=2.500 life=15.000
+ 320	EffectExpired	target=dummy effect=burn
