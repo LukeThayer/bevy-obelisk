@@ -31,8 +31,8 @@ A shared scenario library (`src/scenario/`) drives three validation surfaces:
   before committing** (never blind-regenerate).
 - **Headless screenshots** — `cargo run --example screenshot --features debug-gizmos -- --scenario <name> --tick <n>`
   renders a scenario at a fixed tick to `screenshots/<name>-<tick>.png`.
-- **Windowed playground** — `cargo run --example playground --features debug-gizmos` (keys `1`-`9`,
-  `0`, `-` pick a scenario, `Space` free-casts, `R` resets).
+- **Windowed playground** — `cargo run --example playground --features debug-gizmos` (keys `1`-`9`/`0`/`-`
+  jump to the first 11 scenarios, `[` / `]` cycle through all of them, `Space` free-casts, `R` resets).
 
 See the "Validating changes" section of [CLAUDE.md](CLAUDE.md) for the full workflow and the
 regression rule.

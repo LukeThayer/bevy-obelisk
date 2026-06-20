@@ -5,9 +5,9 @@
 //!   cargo run --example playground --features debug-gizmos
 //!
 //! Controls:
-//!   1-9 0 -  spawn + replay the matching `feature_matrix()` scenario (keys `1`-`9`, then `0`
-//!            and `-` for the 10th and 11th). Despawns the prior scenario's actors, spawns the
-//!            selected scenario's actors, then plays its script via a fixed-tick runner.
+//!   1-9 0 -  jump to one of the first 11 `feature_matrix()` scenarios (keys `1`-`9`, then `0`/`-`).
+//!   [  ]     cycle prev/next through ALL scenarios (so the whole matrix is reachable as it grows).
+//!            Selecting (re)spawns the scenario's actors and plays its script via a fixed-tick runner.
 //!   Space    free-cast the player's first skill at the nearest enemy (via `ObeliskSpatial`).
 //!   R        reset (despawn all scenario actors + stop the active runner).
 //!
@@ -97,6 +97,8 @@ struct PendingCastAssets(Vec<(String, Handle<CastTimeline>)>);
 struct ActiveScenarioInfo {
     name: Option<String>,
     description: String,
+    /// Index of the currently-selected scenario, for `[`/`]` prev/next cycling. `None` until first select.
+    current: Option<usize>,
 }
 
 /// Marker for the info panel's dynamic `Text` (the active scenario name + description).
@@ -123,10 +125,13 @@ fn setup_scene(mut commands: Commands, library: Res<ScenarioLibrary>) {
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    info!("playground ready — press a scenario key (1-9, 0, -), Space to free-cast, R to reset.");
+    info!(
+        "playground ready — keys 1-9/0/- select the first 11 scenarios, [ ] cycle all {}; Space free-casts, R resets.",
+        library.0.len()
+    );
     for (i, s) in library.0.iter().enumerate() {
-        let label = KEY_LABELS.get(i).copied().unwrap_or("?");
-        info!("  [{}] {}", label, s.name);
+        let label = KEY_LABELS.get(i).copied().unwrap_or("·");
+        info!("  [{label}] {}", s.name);
     }
 
     // Loot scenarios need a drop-table registry to roll on death. Load the goblin fixture once
@@ -148,10 +153,10 @@ fn setup_scene(mut commands: Commands, library: Res<ScenarioLibrary>) {
 fn setup_info_panel(mut commands: Commands, library: Res<ScenarioLibrary>) {
     // Build the static CONTROLS + key->scenario legend once at startup.
     let mut legend = String::from(
-        "CONTROLS\n  1-9 / 0 / - : select scenario   |   Space: free-cast at nearest enemy   |   R: reset\n\nSCENARIOS",
+        "CONTROLS\n  1-9 / 0 / - : first 11   |   [ ] : cycle prev/next (all)   |   Space: free-cast   |   R: reset\n\nSCENARIOS",
     );
     for (i, s) in library.0.iter().enumerate() {
-        let label = KEY_LABELS.get(i).copied().unwrap_or("?");
+        let label = KEY_LABELS.get(i).copied().unwrap_or("·");
         legend.push_str(&format!("\n  [{label}] {}", s.name));
     }
 
@@ -260,8 +265,8 @@ fn poll_cast_assets(
 // Scenario picker
 // ----------------------------------------------------------------------------------------------
 
-/// Selection keys, one per scenario slot. `feature_matrix()` currently has 11 scenarios, so the
-/// 10th and 11th map to `0` and `-` after `1`-`9`. Parallel to `KEY_LABELS`.
+/// Number-key quick-access slots for the first 11 scenarios (`1`-`9`, then `0` and `-`); scenarios
+/// beyond the 11th are reached with the `[`/`]` cycle keys. Parallel to `KEY_LABELS`.
 const DIGIT_KEYS: [KeyCode; 11] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
@@ -279,7 +284,8 @@ const DIGIT_KEYS: [KeyCode; 11] = [
 /// Human-readable label for each selection key, parallel to `DIGIT_KEYS`.
 const KEY_LABELS: [&str; 11] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"];
 
-/// Selection keys (`1`-`9`, `0`, `-`) select + start the matching scenario.
+/// Scenario picker: number keys (`1`-`9`/`0`/`-`) jump to the first 11 scenarios; `[`/`]` cycle
+/// prev/next through ALL of `feature_matrix()`. Selecting (re)starts the matching scenario.
 #[allow(clippy::too_many_arguments)]
 fn handle_input(
     keys: Res<ButtonInput<KeyCode>>,
@@ -291,7 +297,23 @@ fn handle_input(
     library: Res<ScenarioLibrary>,
     existing: Query<Entity, With<ScenarioEntity>>,
 ) {
-    let Some(index) = DIGIT_KEYS.iter().position(|k| keys.just_pressed(*k)) else {
+    let n = library.0.len();
+    if n == 0 {
+        return;
+    }
+    // Number keys (`1`-`9`/`0`/`-`) jump to the first 11 scenarios; `[` / `]` cycle prev/next through
+    // ALL of them (so every scenario stays reachable as `feature_matrix()` grows past 11).
+    let index = if let Some(i) = DIGIT_KEYS
+        .iter()
+        .position(|k| keys.just_pressed(*k))
+        .filter(|&i| i < n)
+    {
+        i
+    } else if keys.just_pressed(KeyCode::BracketRight) {
+        info.current.map_or(0, |c| (c + 1) % n)
+    } else if keys.just_pressed(KeyCode::BracketLeft) {
+        info.current.map_or(n - 1, |c| (c + n - 1) % n)
+    } else {
         return;
     };
     let Some(scenario) = library.0.get(index) else {
@@ -305,10 +327,12 @@ fn handle_input(
     // carries `.description` from the library).
     info.name = Some(scenario.name.clone());
     info.description = scenario.description.clone();
+    info.current = Some(index);
 
+    let label = KEY_LABELS.get(index).copied().unwrap_or("·");
     info!(
-        "playing scenario [{}]: {}",
-        KEY_LABELS.get(index).copied().unwrap_or("?"),
+        "playing scenario [{label}] ({}/{n}): {}",
+        index + 1,
         scenario.name
     );
 
@@ -536,6 +560,7 @@ fn reset_on_key(
     // `update_active_scenario_text` rebuilds it).
     info.name = None;
     info.description.clear();
+    info.current = None;
     info!("reset");
 }
 

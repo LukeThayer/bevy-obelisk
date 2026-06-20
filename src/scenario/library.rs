@@ -486,9 +486,9 @@ pub fn crit_strike() -> Scenario {
 /// lower than the un-resisted `20.000` baseline (`firebolt_kill`). `damage_prevented` is summed from
 /// the real obelisk `CombatResult.damage_reduced_by_resists` (see `combat_result_prevented`).
 ///
-/// The dummy carries 50 life (> 10) so it SURVIVES the mitigated direct hit (kill=false) and the
-/// Damage line records cleanly with the prevented amount, before the burn DoT (seeded from the full
-/// pre-mitigation fire damage) finishes it. Uses `.with_stat` only — no new fixture needed.
+/// The dummy carries 50 life (> 10) so it SURVIVES both the mitigated direct hit (kill=false) and
+/// the subsequent burn DoT (the burn expires without a kill); the Damage line records cleanly with
+/// the prevented amount. Uses `.with_stat` only — no new fixture needed.
 pub fn resistance_mitigates() -> Scenario {
     Scenario::new("resistance_mitigates", 42, 600)
         .describe("A target with 50% fire resistance halves firebolt's fire damage: the Damage line reads prevented=10.000 and dmg=10.000, down from the un-resisted 20.000.")

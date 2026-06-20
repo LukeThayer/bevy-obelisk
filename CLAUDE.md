@@ -57,12 +57,18 @@ UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate 
 `run_scenario` (`src/scenario/run.rs`) plays each scenario headlessly through the **public**
 integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
 records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
-diffed against `tests/golden/<name>.trace`. There are **11 scenarios**: `firebolt_kill`,
-`cone_cleave`, `faction_filter`, `out_of_range`, `line_of_sight`, `already_casting`, `apply_effect`,
-`cooldown_gate`, `trigger_cascade`, `loot_on_death`, `netcode_egress` (the last records the buffered
-`NetEvent` egress into the trace). `aoe_fan`/`stat_sources`/`vfx_cues` are intentionally NOT in the
-matrix — they aren't distinct cast-pipeline event traces (covered by direct unit tests / folded into
-`firebolt_kill`); see the `feature_matrix()` doc comment.
+diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical, always-current list
+(**22 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
+`faction_filter`, `apply_effect`); cast rejection + interrupt (`out_of_range`, `line_of_sight`,
+`already_casting`, `cooldown_gate`, `cast_rejected_insufficient_mana`, `cast_rejected_unknown_skill`,
+`cast_rejected_no_target`, `interrupt_cast`); effect triggers from every condition (`trigger_cascade`
+= OnConsume, `on_apply_triggers_skill`, `on_expire_triggers_skill`,
+`on_max_stacks_triggers_and_consumes`); stat-driven effects via `ActorSpec::with_stat` /
+`with_self_effect` + the `DamageResolved` breakdown fields (`self_buff_boosts_damage`, `crit_strike`,
+`resistance_mitigates`, `cast_speed_scaling`); and loot/netcode (`loot_on_death`, `netcode_egress`).
+`aoe_fan`/`stat_sources`/`vfx_cues` are intentionally NOT in the matrix (covered by direct unit tests
+/ folded into `firebolt_kill`); see the `feature_matrix()` doc comment. When you add a scenario,
+update this count.
 
 > **Regression rule.** After **any** behavior change, run the golden suite. A failing golden is a
 > behavior change you must justify. Do NOT blind-regenerate: if a trace change is intentional, run
@@ -85,9 +91,9 @@ the windowed playground to see the HUD. Defaults: `--scenario firebolt_kill --ti
 ```bash
 cargo run --example playground --features debug-gizmos
 ```
-Selection keys `1`-`9`, then `0` and `-` (one per `feature_matrix()` scenario — 11 in all) pick +
-replay a scenario, `Space` free-casts the player's first skill at the nearest enemy (via
-`ObeliskSpatial`), `R` resets. The debug-viz layer
+Selection keys `1`-`9`/`0`/`-` jump to the first 11 scenarios, and `[` / `]` cycle prev/next through
+ALL of `feature_matrix()` (so every scenario is reachable as the matrix grows). `Space` free-casts the
+player's first skill at the nearest enemy (via `ObeliskSpatial`), `R` resets. The debug-viz layer
 (`src/present/debug_viz.rs`) draws the gizmos (hurtbox/hitbox/cone/cast-ring, under `debug-gizmos`),
 the projectile mesh + hit/death reactions, and the HUD (roster + event log + floating damage, under
 `present`). The agent can't drive the window — use the screenshot renderer to corroborate.
