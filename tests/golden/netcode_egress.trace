@@ -5,7 +5,7 @@
   19	HitWindow	caster=player skill=firebolt window=bolt
   21	HitConfirmed	caster=player target=dummy skill=firebolt
   21	Cue	cue=firebolt_impact source=dummy kind=OnHit
-  21	Damage	caster=player target=dummy skill=firebolt dmg=20.000 kill=false life_after=5.000
+  21	Damage	caster=player target=dummy skill=firebolt dmg=20.000 kill=false life_after=5.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
   21	EffectApplied	target=dummy effect=burn dur=5.000 stacks=1
   21	Net	DamageResolved { caster: "player", target: "dummy", skill_id: "firebolt", total_damage: 20.0, is_killing_blow: false, life_after: 5.0 }
   21	Net	EffectApplied { target: "dummy", effect_id: "burn", total_duration: 5.0, stacks: 1 }

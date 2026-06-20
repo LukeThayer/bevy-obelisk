@@ -172,13 +172,18 @@ impl Plugin for TraceRecorderPlugin {
                     t,
                     "Damage",
                     format!(
-                        "caster={} target={} skill={} dmg={:.3} kill={} life_after={:.3}",
+                        "caster={} target={} skill={} dmg={:.3} kill={} life_after={:.3} \
+                         crit={} prevented={:.3} life_gained={:.3} mana_gained={:.3}",
                         id(&ix, e.caster),
                         id(&ix, e.target),
                         e.skill_id,
                         e.total_damage,
                         e.is_killing_blow,
-                        e.life_after
+                        e.life_after,
+                        e.is_critical,
+                        e.damage_prevented,
+                        e.life_gained,
+                        e.mana_gained
                     )
                 );
             },

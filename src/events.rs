@@ -74,6 +74,16 @@ pub struct DamageResolved {
     pub is_killing_blow: bool,
     pub life_after: f64,
     pub mana_spent: f64,
+    /// Whether any packet of this hit was a critical strike (from `DamagePacket.is_critical`).
+    pub is_critical: bool,
+    /// Total damage prevented by all mitigation on the defender (armour + resists + barrier +
+    /// block + physical/generic DR + evasion-cap oneshot protection + elude). Summed across every
+    /// `CombatResult` produced by this hit.
+    pub damage_prevented: f64,
+    /// Life the caster gained from this hit (life-on-hit + life-on-kill leech).
+    pub life_gained: f64,
+    /// Mana the caster gained from this hit (mana-on-hit + mana-on-kill leech).
+    pub mana_gained: f64,
 }
 
 #[derive(Event, Clone, Debug)]

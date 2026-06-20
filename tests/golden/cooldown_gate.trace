@@ -5,7 +5,7 @@
   19	HitWindow	caster=player skill=firebolt_cd window=bolt
   21	HitConfirmed	caster=player target=dummy skill=firebolt_cd
   21	Cue	cue=firebolt_impact source=dummy kind=OnHit
-  21	Damage	caster=player target=dummy skill=firebolt_cd dmg=20.000 kill=false life_after=5.000
+  21	Damage	caster=player target=dummy skill=firebolt_cd dmg=20.000 kill=false life_after=5.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
   21	EffectApplied	target=dummy effect=burn dur=5.000 stacks=1
   25	CastPhase	caster=player skill=firebolt_cd Active->Recovery
   37	CastPhase	caster=player skill=firebolt_cd Recovery->Done

@@ -2,10 +2,10 @@
    7	CastPhase	caster=player skill=cleave Windup->Active
    7	HitWindow	caster=player skill=cleave window=arc
    7	HitConfirmed	caster=player target=front_a skill=cleave
-   7	Damage	caster=player target=front_a skill=cleave dmg=100.000 kill=true life_after=0.000
+   7	Damage	caster=player target=front_a skill=cleave dmg=100.000 kill=true life_after=0.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
    7	Died	target=front_a killer=player
    7	HitConfirmed	caster=player target=front_b skill=cleave
-   7	Damage	caster=player target=front_b skill=cleave dmg=100.000 kill=true life_after=0.000
+   7	Damage	caster=player target=front_b skill=cleave dmg=100.000 kill=true life_after=0.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
    7	Died	target=front_b killer=player
   13	CastPhase	caster=player skill=cleave Active->Recovery
   19	CastPhase	caster=player skill=cleave Recovery->Done

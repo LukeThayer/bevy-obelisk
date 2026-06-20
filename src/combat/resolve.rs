@@ -11,11 +11,44 @@ pub struct HitOutcome {
     pub is_killing_blow: bool,
     pub effects_applied: Vec<Effect>,
     pub mana_spent: f64,
+    /// Whether any damage packet of this hit was a critical strike (from `DamagePacket`).
+    pub is_critical: bool,
+    /// Total damage prevented by all mitigation on the defender, summed across every
+    /// `CombatResult` produced by this hit (see `combat_result_prevented`).
+    pub damage_prevented: f64,
+    /// Life the caster gained from this hit (life-on-hit + life-on-kill leech).
+    pub life_gained: f64,
+    /// Mana the caster gained from this hit (mana-on-hit + mana-on-kill leech).
+    pub mana_gained: f64,
     /// Effect-condition triggers produced by this hit (OnApply/OnMaxStacks/OnConsume, etc.):
     /// both caster-side (from consuming self-effects in `use_skill_against`) and target-side
     /// (from status effects applied to the defender during damage resolution). Surfaced so the
     /// caller can fire / observe them — never silently dropped.
     pub triggered: Vec<stat_core::TriggeredEffect>,
+}
+
+/// Total damage prevented by every mitigation channel obelisk records on a single `CombatResult`:
+/// barrier absorption, armour, resistances, block, physical/generic damage reduction, evasion-cap
+/// oneshot protection, and elude. Reads real fields off the result — never recomputes mitigation.
+pub fn combat_result_prevented(r: &stat_core::combat::CombatResult) -> f64 {
+    r.damage_blocked_by_barrier
+        + r.damage_reduced_by_armour
+        + r.damage_reduced_by_resists
+        + r.damage_blocked
+        + r.damage_reduced_by_physical_dr
+        + r.damage_reduced_by_dr
+        + r.damage_prevented_by_oneshot
+        + r.damage_prevented_by_elude
+}
+
+/// Life gained by the caster from one `CombatResult` (on-hit + on-kill leech).
+pub fn combat_result_life_gained(r: &stat_core::combat::CombatResult) -> f64 {
+    r.life_gained_on_hit + r.life_gained_on_kill
+}
+
+/// Mana gained by the caster from one `CombatResult` (on-hit + on-kill leech).
+pub fn combat_result_mana_gained(r: &stat_core::combat::CombatResult) -> f64 {
+    r.mana_gained_on_hit + r.mana_gained_on_kill
 }
 
 /// The ONE true deterministic resolve path. Never calls `receive_damage`/`resolve_damage`.
@@ -44,6 +77,15 @@ pub fn resolve_one_hit(
         .flat_map(|r| r.effects_applied.clone())
         .collect();
 
+    // Damage breakdown surfaced from the real resolution (never recomputed / fabricated):
+    //  - crit lives on the DamagePacket (each packet carries `is_critical`); a hit is "crit" if
+    //    any of its packets crit.
+    //  - mitigation + leech live on each CombatResult; sum across every resolved packet.
+    let is_critical = skill_result.packets.iter().any(|p| p.is_critical);
+    let damage_prevented: f64 = tr.results.iter().map(combat_result_prevented).sum();
+    let life_gained: f64 = tr.results.iter().map(combat_result_life_gained).sum();
+    let mana_gained: f64 = tr.results.iter().map(combat_result_mana_gained).sum();
+
     // Surface ALL effect-condition triggers so none are silently dropped:
     //  - caster-side: produced by `use_skill_against` consuming self-effects (OnConsume, etc.).
     //  - target-side: produced while resolving the packets against the defender, e.g. an OnApply
@@ -61,6 +103,10 @@ pub fn resolve_one_hit(
         is_killing_blow,
         effects_applied,
         mana_spent: skill_result.mana_spent,
+        is_critical,
+        damage_prevented,
+        life_gained,
+        mana_gained,
         triggered,
     })
 }

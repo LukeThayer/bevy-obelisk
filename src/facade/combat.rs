@@ -46,6 +46,10 @@ impl ObeliskCombat<'_, '_> {
             is_killing_blow: outcome.is_killing_blow,
             life_after,
             mana_spent: outcome.mana_spent,
+            is_critical: outcome.is_critical,
+            damage_prevented: outcome.damage_prevented,
+            life_gained: outcome.life_gained,
+            mana_gained: outcome.mana_gained,
         });
         for ef in &outcome.effects_applied {
             self.commands.trigger(EffectApplied {
