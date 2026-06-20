@@ -1,0 +1,14 @@
+id = "unlimited_dot"
+name = "Unlimited DoT"
+duration = 5.0
+is_debuff = true
+stacking = "unlimited"
+
+# Unlimited stacking: each re-application appends an INDEPENDENT per-stack timer, so
+# stacks accumulate without bound (no max_stacks cap). Carries a stat modifier so
+# add_effect runs the real rebuild path; the observable signature through the public
+# apply pipeline is the EffectApplied line's stacks climbing 1 -> 2 -> 3 -> 4 ...
+# unbounded, in contrast to the refresh fixture which plateaus at its max_stacks cap.
+[[modifiers]]
+stat = "increased_fire_damage"
+value = 10.0

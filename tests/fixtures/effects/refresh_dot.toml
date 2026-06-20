@@ -1,0 +1,15 @@
+id = "refresh_dot"
+name = "Refresh DoT"
+duration = 5.0
+is_debuff = true
+stacking = "refresh"
+max_stacks = 3
+
+# Refresh stacking: re-applying ADDS a stack (capped at max_stacks=3) AND refreshes
+# the shared duration back to full. Carries a stat modifier so add_effect runs the
+# real rebuild path; the observable signature through the public apply pipeline is the
+# EffectApplied line's stacks climbing (1 -> 2 -> 3, then plateauing at the cap) while
+# dur stays pinned at the full 5.000 (refreshed) on every re-application.
+[[modifiers]]
+stat = "increased_fire_damage"
+value = 10.0

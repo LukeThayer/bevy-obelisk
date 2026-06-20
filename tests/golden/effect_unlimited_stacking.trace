@@ -1,0 +1,4 @@
+   1	EffectApplied	target=target effect=unlimited_dot dur=5.000 stacks=1
+   5	EffectApplied	target=target effect=unlimited_dot dur=5.000 stacks=2
+   9	EffectApplied	target=target effect=unlimited_dot dur=5.000 stacks=3
+  13	EffectApplied	target=target effect=unlimited_dot dur=5.000 stacks=4

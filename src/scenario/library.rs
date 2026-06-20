@@ -404,6 +404,106 @@ pub fn on_max_stacks_triggers_and_consumes() -> Scenario {
         )
 }
 
+/// Refresh stacking (Batch 4): `refresh_dot` is a finite-duration (5.0s) `refresh`-stacking debuff with
+/// `max_stacks = 3`. We apply it four times a few ticks apart via `Action::ApplyEffect`. Each
+/// re-application routes through `apply_obelisk_effect` -> `StatBlock::add_effect`'s `Refresh` branch,
+/// which `add_stack()`s (capped at `max_stacks`) and `refresh()`es the SHARED duration timer back to
+/// full. The verb re-reads the effect after `add_effect`, so the golden's `EffectApplied` line shows
+/// the Refresh signature: `stacks` climbs 1 -> 2 -> 3 and then PLATEAUS at the 3-stack cap on the 4th
+/// application, while `dur` stays pinned at the full `5.000` on every re-application (the duration is
+/// refreshed, never decaying in the trace). These exact values were captured empirically from obelisk's
+/// real `add_effect` (`stacks=1,2,3,3` / `dur=5.000`), not fabricated.
+///
+/// NOTE ON THE "DoT" NAME / NO `DotTicked` LINES: the public apply pipeline (`apply_obelisk_effect`)
+/// builds the effect via `EffectConfig::to_effect`, which constructs a stat-modifier `Effect` with
+/// `dot: None` — obelisk only attaches DoT data (`dot_dps`) when an effect is applied through the
+/// *damage* pipeline (`to_ailment_effect_with_values`, the firebolt path), where the DPS is computed
+/// from the hit. So a directly-applied effect NEVER ticks DoT damage (cf. `apply_effect`, where a
+/// directly-applied `burn` also emits zero `DotTicked`). The faithful, observable signature of the
+/// Refresh *stacking* mode through this public path is therefore the `EffectApplied` stacks/duration
+/// progression above — the golden does not (and must not) fabricate `DotTicked` lines.
+pub fn effect_refresh_stacking() -> Scenario {
+    Scenario::new("effect_refresh_stacking", 5, 30)
+        .describe("Re-applying a refresh-stacking debuff (max_stacks=3) adds a stack and refreshes duration: EffectApplied stacks climb 1->2->3 then plateau at the cap, dur stays pinned at 5.000.")
+        .actor("target", Faction::Enemy, 100.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "refresh_dot".into(),
+            },
+        )
+        .at(
+            5,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "refresh_dot".into(),
+            },
+        )
+        .at(
+            9,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "refresh_dot".into(),
+            },
+        )
+        .at(
+            13,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "refresh_dot".into(),
+            },
+        )
+}
+
+/// Unlimited stacking (Batch 4): `unlimited_dot` is a finite-duration (5.0s) `unlimited`-stacking
+/// debuff with NO `max_stacks` cap. We apply it four times a few ticks apart via `Action::ApplyEffect`.
+/// Each re-application routes through `apply_obelisk_effect` -> `StatBlock::add_effect`'s `Unlimited`
+/// branch, which promotes the timer to `StackTimers::PerStack` and PUSHES an independent per-stack
+/// timer, setting `stacks = timers.len()`. So the golden's `EffectApplied` line shows the Unlimited
+/// signature: `stacks` climbs WITHOUT bound — 1 -> 2 -> 3 -> 4 — visibly diverging from the refresh
+/// fixture (which plateaus at 3 on its 4th application). `dur` stays at `5.000` (the Unlimited branch
+/// never calls `refresh`, but `total_duration` was set to the full 5.0 at creation and is unchanged).
+/// These exact values were captured empirically from obelisk's real `add_effect` (`stacks=1,2,3,4` /
+/// `dur=5.000`), not fabricated.
+///
+/// (Same "DoT name / no `DotTicked`" caveat as `effect_refresh_stacking`: the public apply pipeline
+/// builds the effect with `dot: None`, so the observable signature is the climbing-stacks
+/// `EffectApplied` progression, not DoT ticks.)
+pub fn effect_unlimited_stacking() -> Scenario {
+    Scenario::new("effect_unlimited_stacking", 5, 30)
+        .describe("Re-applying an unlimited-stacking debuff adds independent stacks with no cap: EffectApplied stacks climb 1->2->3->4 unbounded (vs the refresh fixture plateauing at its max_stacks).")
+        .actor("target", Faction::Enemy, 100.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "unlimited_dot".into(),
+            },
+        )
+        .at(
+            5,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "unlimited_dot".into(),
+            },
+        )
+        .at(
+            9,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "unlimited_dot".into(),
+            },
+        )
+        .at(
+            13,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "unlimited_dot".into(),
+            },
+        )
+}
+
 /// Self-buff boosts damage (Batch 3, end-to-end proof of "applying buffs to self"): the player
 /// starts with the `empower` self-buff (`+50% increased fire damage`, applied at spawn via
 /// `.with_self_effect` -> the public `apply_obelisk_effect` verb, sourced from the caster itself),
@@ -672,6 +772,21 @@ pub fn cast_rejected_no_target() -> Scenario {
 /// `trigger_cascade` (which is the `OnConsume` template). They ship the `on_apply_proc` / `rage`
 /// effect fixtures (and reuse the existing `on_expire_proc` + `static_discharge`); adding new effect
 /// fixtures does NOT perturb the existing goldens (no prior scenario references them).
+///
+/// Stacking-mode scenarios (Batch 4) — `effect_refresh_stacking`, `effect_unlimited_stacking` —
+/// cover the `StackingBehavior::{Refresh, Unlimited}` variants left uncovered by
+/// `on_max_stacks_triggers_and_consumes` (the `Limited` template, via `rage`). They ship the
+/// `refresh_dot` / `unlimited_dot` fixtures. The fourth variant, `StackingBehavior::StrongestOnly`,
+/// is INTENTIONALLY NOT a scenario: through the public apply pipeline (`apply_obelisk_effect` ->
+/// `EffectConfig::to_effect`) an effect is built with `dot: None`, so its `dps()` is always `0`. The
+/// `StrongestOnly` branch's only discriminator is `new.dps() >= existing.dps()` (`0 >= 0` is always
+/// true), so a "stronger" re-application is INDISTINGUISHABLE from a "weaker" one — the magnitude /
+/// modifier-value difference that would make one "stronger" is not carried in the `EffectApplied`
+/// trace line (which exposes only `effect`, `dur`, `stacks`). The mode therefore has no DISTINCT,
+/// observable trace through the public event pipeline, so it is DROPPED rather than committed as a
+/// golden that does not actually demonstrate "stronger replaces weaker". (Also note: neither stacking
+/// golden carries `DotTicked` lines — `to_effect` produces no DoT data, so the observable signature is
+/// the `EffectApplied` stacks/duration progression, exactly as for `apply_effect`.)
 pub fn feature_matrix() -> Vec<Scenario> {
     vec![
         firebolt_kill(),
@@ -688,6 +803,8 @@ pub fn feature_matrix() -> Vec<Scenario> {
         on_apply_triggers_skill(),
         on_expire_triggers_skill(),
         on_max_stacks_triggers_and_consumes(),
+        effect_refresh_stacking(),
+        effect_unlimited_stacking(),
         self_buff_boosts_damage(),
         crit_strike(),
         resistance_mitigates(),

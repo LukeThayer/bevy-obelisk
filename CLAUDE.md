@@ -58,12 +58,15 @@ UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate 
 integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
 records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
 diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical, always-current list
-(**22 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
+(**24 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
 `faction_filter`, `apply_effect`); cast rejection + interrupt (`out_of_range`, `line_of_sight`,
 `already_casting`, `cooldown_gate`, `cast_rejected_insufficient_mana`, `cast_rejected_unknown_skill`,
 `cast_rejected_no_target`, `interrupt_cast`); effect triggers from every condition (`trigger_cascade`
 = OnConsume, `on_apply_triggers_skill`, `on_expire_triggers_skill`,
-`on_max_stacks_triggers_and_consumes`); stat-driven effects via `ActorSpec::with_stat` /
+`on_max_stacks_triggers_and_consumes`); effect stacking modes (`effect_refresh_stacking` = Refresh,
+`effect_unlimited_stacking` = Unlimited; the `Limited` mode is `on_max_stacks_triggers_and_consumes`'s
+`rage`, and `StrongestOnly` is dropped — it has no distinct observable trace through the public apply
+path, see the `feature_matrix()` doc comment); stat-driven effects via `ActorSpec::with_stat` /
 `with_self_effect` + the `DamageResolved` breakdown fields (`self_buff_boosts_damage`, `crit_strike`,
 `resistance_mitigates`, `cast_speed_scaling`); and loot/netcode (`loot_on_death`, `netcode_egress`).
 `aoe_fan`/`stat_sources`/`vfx_cues` are intentionally NOT in the matrix (covered by direct unit tests
