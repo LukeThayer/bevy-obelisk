@@ -1,0 +1,3 @@
+   0	EffectApplied	target=? effect=on_expire_proc dur=0.100 stacks=1
+   5	EffectExpired	target=target effect=on_expire_proc
+   5	TriggerFired	source=target target=target skill=static_discharge effect=on_expire_proc

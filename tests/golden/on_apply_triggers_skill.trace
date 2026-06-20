@@ -1,0 +1,2 @@
+   1	EffectApplied	target=target effect=on_apply_proc dur=inf stacks=1
+   1	TriggerFired	source=target target=target skill=static_discharge effect=on_apply_proc

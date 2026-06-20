@@ -327,6 +327,82 @@ pub fn netcode_egress() -> Scenario {
         )
 }
 
+/// On-apply trigger: `on_apply_proc` is an infinite-duration buff whose `OnApply` condition triggers
+/// `static_discharge`. We apply it to a target via `Action::ApplyEffect` at tick 1 (after the entity is
+/// registered in `ObeliskEntityIndex`, so the trace carries resolved string ids rather than `?`). The
+/// apply routes through `apply_obelisk_effect` -> `StatBlock::add_effect`, which collects every `OnApply`
+/// condition on the freshly-added effect and returns it as a `TriggeredEffect`; the verb surfaces each as
+/// `TriggerFired`. The golden shows `EffectApplied(on_apply_proc)` AND, at the same tick, `TriggerFired
+/// skill=static_discharge effect=on_apply_proc` (source == target, a self-sourced effect). The triggered
+/// skill is SURFACED only — not auto-fired from the command closure (the documented apply-path boundary),
+/// so there is no second damage line. Reuses the existing `static_discharge` skill as the trigger target.
+pub fn on_apply_triggers_skill() -> Scenario {
+    Scenario::new("on_apply_triggers_skill", 5, 12)
+        .describe("Applying an OnApply-trigger buff surfaces TriggerFired(static_discharge) at apply time alongside EffectApplied.")
+        .actor("target", Faction::Enemy, 100.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "on_apply_proc".into(),
+            },
+        )
+}
+
+/// On-expire trigger (end-to-end proof of the H5 fix): a target starts with `on_expire_proc`, a short
+/// 0.1s finite-duration debuff whose `OnExpire` condition triggers `static_discharge`. The effect is
+/// applied at scenario start (`.with_self_effect`), and the scenario runs long enough (60 ticks ≈ 1.0s)
+/// for `tick_effects_system` to expire it. Before the H5 fix, `tick_effects_system` discarded the
+/// `TickResult.triggered_effects`, so the OnExpire trigger was silently dropped. The golden shows
+/// `EffectApplied(on_expire_proc)` -> ... -> `EffectExpired(on_expire_proc)` AND `TriggerFired
+/// skill=static_discharge effect=on_expire_proc` at expiry (surfaced, not auto-fired). Mirrors the
+/// `src/core/tick.rs::on_expire_trigger_is_surfaced_when_an_effect_expires` unit test through the full
+/// scenario pipeline.
+pub fn on_expire_triggers_skill() -> Scenario {
+    Scenario::new("on_expire_triggers_skill", 7, 60)
+        .describe("A short OnExpire-trigger debuff fires TriggerFired(static_discharge) when it expires (end-to-end proof of the tick-path OnExpire surfacing).")
+        .actor("target", Faction::Enemy, 100.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .with_self_effect("on_expire_proc")
+}
+
+/// On-max-stacks trigger + consume: `rage` is an infinite-duration `limited`-stacking buff (max_stacks
+/// = 3) whose `OnMaxStacks { consume = true }` condition triggers `static_discharge`. We apply it to a
+/// target three times (a few ticks apart) via `Action::ApplyEffect`. Each application routes through
+/// `apply_obelisk_effect` -> `StatBlock::add_effect`'s `Limited` branch, which `add_stack`s and, only
+/// once `stacks >= max_stacks`, returns the `OnMaxStacks` trigger AND (because `consume = true`) removes
+/// the effect. So the golden shows `EffectApplied stacks=1`, then `stacks=2`, then on the 3rd application
+/// `TriggerFired skill=static_discharge effect=rage` (the surfaced trigger) — and the 3rd `EffectApplied`
+/// reads `dur=0.000 stacks=1` because the verb re-reads the effect AFTER `add_effect` already consumed
+/// (removed) it (the genuine post-consume read; not a fabricated value). The triggered skill is surfaced
+/// only, not auto-fired from the command closure (the documented apply-path boundary). Reaching max-stacks
+/// IS elicited through the public apply pipeline, so no routing-boundary drop is needed here.
+pub fn on_max_stacks_triggers_and_consumes() -> Scenario {
+    Scenario::new("on_max_stacks_triggers_and_consumes", 5, 30)
+        .describe("Applying a limited max_stacks=3 buff three times reaches max stacks on the 3rd, firing TriggerFired(static_discharge) and consuming (removing) the effect.")
+        .actor("target", Faction::Enemy, 100.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "rage".into(),
+            },
+        )
+        .at(
+            5,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "rage".into(),
+            },
+        )
+        .at(
+            9,
+            Action::ApplyEffect {
+                target: "target".into(),
+                effect: "rage".into(),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -341,6 +417,12 @@ pub fn netcode_egress() -> Scenario {
 /// are now included; they each ship dedicated fixtures (`firebolt_cd`, `discharge_strike` +
 /// `static_discharge` + `charged`, and the `goblin` drop table) so existing batch-A goldens are
 /// untouched.
+///
+/// Effect-trigger scenarios — `on_apply_triggers_skill`, `on_expire_triggers_skill`,
+/// `on_max_stacks_triggers_and_consumes` — cover the three `EffectTrigger` variants left uncovered by
+/// `trigger_cascade` (which is the `OnConsume` template). They ship the `on_apply_proc` / `rage`
+/// effect fixtures (and reuse the existing `on_expire_proc` + `static_discharge`); adding new effect
+/// fixtures does NOT perturb the existing goldens (no prior scenario references them).
 pub fn feature_matrix() -> Vec<Scenario> {
     vec![
         firebolt_kill(),
@@ -354,5 +436,8 @@ pub fn feature_matrix() -> Vec<Scenario> {
         trigger_cascade(),
         loot_on_death(),
         netcode_egress(),
+        on_apply_triggers_skill(),
+        on_expire_triggers_skill(),
+        on_max_stacks_triggers_and_consumes(),
     ]
 }

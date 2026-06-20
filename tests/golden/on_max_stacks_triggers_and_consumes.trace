@@ -1,0 +1,4 @@
+   1	EffectApplied	target=target effect=rage dur=inf stacks=1
+   5	EffectApplied	target=target effect=rage dur=inf stacks=2
+   9	EffectApplied	target=target effect=rage dur=0.000 stacks=1
+   9	TriggerFired	source=target target=target skill=static_discharge effect=rage

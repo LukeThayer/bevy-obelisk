@@ -1,0 +1,11 @@
+id = "rage"
+name = "Rage"
+duration = "infinite"
+is_debuff = false
+stacking = "limited"
+max_stacks = 3
+
+[[conditions]]
+type = "on_max_stacks"
+trigger_skill = "static_discharge"
+consume = true
