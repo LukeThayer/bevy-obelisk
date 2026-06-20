@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use stat_core::StatBlock;
+use stat_core::{StatBlock, StatType};
 
 // Model + library + the shared step-applier are ALWAYS compiled (the playground and
 // screenshot examples consume the scenario DATA without the test-support runner).
@@ -66,6 +66,29 @@ pub struct ActorSpec {
     pub skills: Vec<String>,
     pub drop_table: Option<String>,
     pub hurtbox_radius: f32,
+    /// Custom stat modifiers ((StatType, value) pairs) flowed through obelisk's REAL
+    /// stat-rebuild path in `stat_block()`. Empty by default (no-op for existing scenarios).
+    pub stats: Vec<(StatType, f64)>,
+    /// Effect ids self-applied to this actor at spawn (buffs). Empty by default.
+    pub self_effects: Vec<String>,
+}
+
+/// A `StatSource` that feeds a scenario actor's custom `(StatType, value)` modifiers through
+/// obelisk's real `StatBlock::rebuild_from_sources` path (so they aggregate exactly as gear /
+/// skill-tree sources do). Private to the scenario harness.
+struct ScenarioStatSource {
+    mods: Vec<(StatType, f64)>,
+}
+
+impl stat_core::source::StatSource for ScenarioStatSource {
+    fn id(&self) -> &str {
+        "scenario_stats"
+    }
+    fn apply(&self, stats: &mut stat_core::stat_block::StatAccumulator) {
+        for (stat, value) in &self.mods {
+            stats.apply_stat_type(stat.clone(), *value);
+        }
+    }
 }
 
 impl ActorSpec {
@@ -75,6 +98,15 @@ impl ActorSpec {
         b.current_life = self.life;
         b.max_mana.base = self.mana;
         b.current_mana = self.mana;
+        // Flow any custom stat modifiers through obelisk's REAL rebuild path. `rebuild()` only
+        // resets the per-stat flat/increased/more layers (via `reset_to_base()`) and never touches
+        // `*.base` or `current_life`/`current_mana`, so the life/mana bases set above survive.
+        if !self.stats.is_empty() {
+            let source = ScenarioStatSource {
+                mods: self.stats.clone(),
+            };
+            b.rebuild_from_sources(&[Box::new(source)]);
+        }
         b
     }
 }
@@ -127,6 +159,8 @@ impl Scenario {
             skills: vec![],
             drop_table: None,
             hurtbox_radius: 0.6,
+            stats: vec![],
+            self_effects: vec![],
         });
         self
     }
@@ -134,6 +168,21 @@ impl Scenario {
     pub fn with_skill(mut self, skill: &str) -> Self {
         if let Some(a) = self.actors.last_mut() {
             a.skills.push(skill.into());
+        }
+        self
+    }
+    /// Add a custom stat modifier to the last-added actor. Flowed through obelisk's real
+    /// stat-rebuild path in `ActorSpec::stat_block()`.
+    pub fn with_stat(mut self, stat: StatType, value: f64) -> Self {
+        if let Some(a) = self.actors.last_mut() {
+            a.stats.push((stat, value));
+        }
+        self
+    }
+    /// Self-apply an effect (by id) to the last-added actor at spawn (a starting buff).
+    pub fn with_self_effect(mut self, effect: &str) -> Self {
+        if let Some(a) = self.actors.last_mut() {
+            a.self_effects.push(effect.into());
         }
         self
     }
@@ -190,6 +239,14 @@ pub fn spawn_actor(app: &mut App, a: &ActorSpec) -> Entity {
     {
         let mut c = app.world_mut().commands();
         insert_hurtbox(&mut c, e, a.hurtbox_radius, pos);
+    }
+    // Self-apply any starting effects (buffs), sourced from the actor itself. Mirrors how
+    // `Action::ApplyEffect` is handled; the effect comes from the initialized EffectRegistry.
+    for effect in &a.self_effects {
+        app.world_mut()
+            .commands()
+            .entity(e)
+            .apply_obelisk_effect(effect.clone());
     }
     e
 }
@@ -286,5 +343,48 @@ mod tests {
         assert_eq!(s.actors[0].skills, vec!["firebolt".to_string()]);
         assert_eq!(s.script.len(), 1);
         assert!(!s.record_net);
+    }
+
+    #[test]
+    fn with_stat_flows_through_rebuild_without_wiping_bases() {
+        // An actor with a custom stat modifier: the rebuilt StatBlock must reflect the modifier
+        // AND keep its configured base life (rebuild_from_sources must not wipe the bases).
+        let s = Scenario::new("stat", 1, 1)
+            .actor("buffed", Faction::Player, 80.0, 40.0, Vec3::ZERO)
+            .with_stat(StatType::FireResistance, 30.0);
+        let actor = &s.actors[0];
+        assert_eq!(actor.stats, vec![(StatType::FireResistance, 30.0)]);
+
+        let block = actor.stat_block();
+        // The custom modifier survived the rebuild (FireResistance is a flat add, no /100).
+        assert!(
+            (block.fire_resistance.compute() - 30.0).abs() < 1e-9,
+            "fire resistance should reflect the +30 modifier (got {})",
+            block.fire_resistance.compute()
+        );
+        // The base life set before the rebuild was NOT wiped.
+        assert!(
+            (block.computed_max_life() - 80.0).abs() < 1e-9,
+            "base max life must survive rebuild_from_sources (got {})",
+            block.computed_max_life()
+        );
+        assert!(
+            (block.current_life - 80.0).abs() < 1e-9,
+            "current life must survive rebuild (got {})",
+            block.current_life
+        );
+        assert!(
+            (block.computed_max_mana() - 40.0).abs() < 1e-9,
+            "base max mana must survive rebuild (got {})",
+            block.computed_max_mana()
+        );
+    }
+
+    #[test]
+    fn with_self_effect_records_starting_buffs() {
+        let s = Scenario::new("buff", 1, 1)
+            .actor("hero", Faction::Player, 100.0, 0.0, Vec3::ZERO)
+            .with_self_effect("burn");
+        assert_eq!(s.actors[0].self_effects, vec!["burn".to_string()]);
     }
 }
