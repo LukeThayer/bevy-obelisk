@@ -1,0 +1,11 @@
+(
+  skill_id: "quickjab",
+  phase_durations: ( windup: 0.001, active: 0.05, recovery: 0.05 ),
+  collision_windows: [
+    ( id: "jab", spawn_phase: Active, spawn_offset: 0.0, active_duration: 0.05,
+      shape: Cone( angle: 120.0, range: 3.0 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+  targeting: SingleEntity( range: 3.0 ),
+  delivery: Melee,
+)

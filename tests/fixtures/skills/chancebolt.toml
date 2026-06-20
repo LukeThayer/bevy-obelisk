@@ -1,0 +1,26 @@
+id = "chancebolt"
+name = "Chancebolt"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+
+# Applies `chill` to the target with a SUB-100% chance. obelisk computes the apply
+# chance as `status_damage / target_max_health`; here status_damage = 20 base fire *
+# 1.0 conversion = 20, so against a 40-max-life target the chance is 20/40 = 0.50.
+# The roll is drawn off the seeded CombatRng, so the outcome is DETERMINISTIC per
+# (seed, target-HP). NOTE the absence of `apply_chance = "always"` (cf. firebolt):
+# the `damage_scaled` apply_chance below makes this a real chance roll, not a
+# guaranteed application.
+[[effect_applications]]
+effect_id = "chill"
+target = "target"
+
+[effect_applications.scaling.damage_driven]
+conversions = { fire = 1.0 }
+
+[effect_applications.apply_chance.damage_scaled]
+bonus = 0.0
+
+[damage]
+base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]

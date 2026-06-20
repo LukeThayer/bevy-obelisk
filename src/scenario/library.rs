@@ -752,6 +752,98 @@ pub fn cast_rejected_no_target() -> Scenario {
         )
 }
 
+/// Multi-hit hitbox (`EveryTick`): a melee `pummel` skill whose collision window is authored with
+/// `hit_mode: EveryTick` and a `Static` (non-moving) sphere that stays active for `active_duration =
+/// 0.1s` (6 fixed ticks at 60 Hz). A single stationary, high-life enemy stands inside the sphere for
+/// the whole window. Because `Hitbox::can_hit` returns `true` unconditionally for `EveryTick` (see
+/// `src/spatial/boxes.rs`), `detect_overlaps` re-confirms the SAME target on every FixedUpdate the
+/// box is alive, so the golden shows MULTIPLE `Damage` lines for the same `target=dummy` (one per
+/// tick the box overlaps it) — the observable signature of a multi-hit hitbox, vs the single Damage
+/// line of the `OncePerTarget` cleave / `FirstOnly` firebolt. The dummy carries 10_000 life so it
+/// survives every tick (no `Died` truncating the repeats), and `pummel` is a zero-mana melee skill so
+/// the per-tick `use_skill_against` never gates on mana. Ships the `pummel.toml` (+ `.cast.ron`)
+/// fixtures; no existing scenario references them, so existing goldens are untouched.
+pub fn everytick_hitbox() -> Scenario {
+    Scenario::new("everytick_hitbox", 5, 30)
+        .describe("A persistent EveryTick melee hitbox re-hits the same stationary enemy every tick it stays inside: the golden shows multiple Damage lines for the one target.")
+        .cast_asset("pummel")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("pummel")
+        .actor(
+            "dummy",
+            Faction::Enemy,
+            10000.0,
+            0.0,
+            Vec3::new(0.0, 0.0, 1.0),
+        )
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "pummel".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Instant cast (near-zero windup): `quickjab` is a melee skill authored with a near-zero windup
+/// (`windup: 0.001s` ≈ a single fixed tick at 60 Hz) — vs firebolt's 0.3s / ~18-tick windup. Its hit
+/// window therefore opens almost immediately after `CastBegan`: the golden's `HitWindow` /
+/// `HitConfirmed` land at a VERY EARLY tick (≈ tick 2-3) rather than firebolt's ~19/21
+/// (cf. `firebolt_kill`). This validates that the timeline faithfully resolves a (near-)instant cast
+/// to an immediate hit — the authoring-controlled windup is what gates *when* the box spawns. The
+/// dummy carries enough life (50) to survive the 15 jab so the Damage line records cleanly. Ships the
+/// `quickjab.toml` (+ `.cast.ron`) fixtures; no existing scenario references them.
+pub fn instant_cast() -> Scenario {
+    Scenario::new("instant_cast", 5, 20)
+        .describe("A near-zero-windup (instant) melee cast resolves to a hit almost immediately: HitWindow/HitConfirmed land at a very early tick vs firebolt's ~19.")
+        .cast_asset("quickjab")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("quickjab")
+        .actor("dummy", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 1.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "quickjab".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Probabilistic effect apply (seeded ⇒ deterministic): `chancebolt` is a firebolt-shaped projectile
+/// that applies the `chill` debuff with a SUB-100% chance. obelisk computes the apply chance as
+/// `status_damage / target_max_health` (`stat_core` `PendingStatusEffect::calculate_apply_chance`),
+/// here `status_damage = 20 base fire * 1.0 conversion = 20` against the dummy's `40` max life, so the
+/// chance is `20 / 40 = 0.50`. The roll (`rng.gen::<f64>() < 0.5` in `combat/resolution.rs`) is drawn
+/// off the seeded `CombatRng`, so whether `chill` lands is FULLY DETERMINISTIC for this `(seed = 11,
+/// 40-HP)` pair. The golden faithfully records the deterministic outcome for that seed: an
+/// `EffectApplied chill` line is present iff the seeded roll passed (captured empirically from the
+/// real resolve path — NOT fabricated; the companion unit test
+/// `src/scenario/library.rs::probabilistic_apply_is_deterministic_and_split_by_seed` pins both a
+/// PASS-seed and a FAIL-seed at the resolve layer so the absence/presence is proven, not assumed).
+/// The dummy's 40 life survives the 20 fire hit (kill=false) so the Damage line — and the
+/// applied-or-not `chill` — record cleanly without a `Died` truncating the trace. Ships the
+/// `chancebolt.toml` (+ `.cast.ron`) skill and the `chill.toml` effect fixtures; no existing scenario
+/// references them. The `apply_chance.damage_scaled` form (no `apply_chance = "always"`) is what makes
+/// this a real chance roll rather than a guaranteed application.
+pub fn probabilistic_effect_apply() -> Scenario {
+    Scenario::new("probabilistic_effect_apply", 11, 60)
+        .describe("A chancebolt applies 'chill' with a 50% (status_damage/max_life) chance; the seeded CombatRng makes the roll deterministic, so the golden records whether chill applied for this seed.")
+        .cast_asset("chancebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("chancebolt")
+        .actor("dummy", Faction::Enemy, 40.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "chancebolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -813,5 +905,87 @@ pub fn feature_matrix() -> Vec<Scenario> {
         cast_rejected_insufficient_mana(),
         cast_rejected_unknown_skill(),
         cast_rejected_no_target(),
+        everytick_hitbox(),
+        instant_cast(),
+        probabilistic_effect_apply(),
     ]
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+    use stat_core::StatBlock;
+
+    /// Companion to the `probabilistic_effect_apply` golden: proves the seeded apply-chance roll is
+    /// (a) DETERMINISTIC and (b) genuinely SPLIT by seed (so the golden's recorded outcome is a real
+    /// roll, not a guaranteed application). `chancebolt` applies `chill` with chance
+    /// `status_damage / target_max_health = 20 / 40 = 0.50`; we resolve one hit through the SAME
+    /// deterministic funnel the scenario uses (`resolve_one_hit`, seeded `ChaCha8Rng`) and assert:
+    ///
+    /// - seed 11 (the golden's seed) lands chill (PASS) — matches the golden's `EffectApplied chill`;
+    /// - seed 2 does NOT land chill (FAIL) — the same skill/HP, different seed, opposite outcome;
+    /// - re-running a seed reproduces its outcome bit-for-bit.
+    ///
+    /// The PASS/FAIL split off identical inputs is what makes this a probabilistic (sub-100%) apply
+    /// rather than `apply_chance = "always"`. (Note: at the scenario level no rng is drawn before the
+    /// hit, so the scenario's seed-11 outcome equals this resolve-layer seed-11 outcome — hence the
+    /// golden shows `chill` applied.)
+    fn resolve_chill(seed: u64) -> bool {
+        crate::testkit::init_test_obelisk();
+        let registry =
+            stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills"))
+                .unwrap();
+        let skill = registry.get("chancebolt").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 40.0;
+        target.current_life = 40.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let outcome = crate::combat::resolve::resolve_one_hit(
+            &mut caster,
+            &mut target,
+            skill,
+            &registry,
+            &mut rng,
+        )
+        .unwrap();
+        // The 20 fire hit leaves the 40-life dummy alive (max_life still 40 ⇒ chance 0.5).
+        assert!(
+            (target.current_life - 20.0).abs() < 1e-9,
+            "dummy should survive the 20 fire hit (got {})",
+            target.current_life
+        );
+        outcome.effects_applied.iter().any(|e| e.id == "chill")
+    }
+
+    #[test]
+    fn probabilistic_apply_is_deterministic_and_split_by_seed() {
+        // The golden's seed lands chill (PASS) — matches `EffectApplied chill` in the golden.
+        assert!(
+            resolve_chill(11),
+            "seed 11 must land chill (the probabilistic_effect_apply golden records EffectApplied)"
+        );
+        // A different seed, same skill + same 40-HP target, does NOT land chill (FAIL) — proving the
+        // application is a real sub-100% roll, not guaranteed.
+        assert!(
+            !resolve_chill(2),
+            "seed 2 must NOT land chill (the same 50% roll, opposite outcome — proves it's probabilistic)"
+        );
+        // Determinism: re-running a seed reproduces its outcome bit-for-bit.
+        assert_eq!(
+            resolve_chill(11),
+            resolve_chill(11),
+            "PASS seed must reproduce"
+        );
+        assert_eq!(
+            resolve_chill(2),
+            resolve_chill(2),
+            "FAIL seed must reproduce"
+        );
+    }
 }

@@ -1,0 +1,7 @@
+   2	CastBegan	caster=player skill=quickjab dur=0.101
+   2	CastPhase	caster=player skill=quickjab Windup->Active
+   2	HitWindow	caster=player skill=quickjab window=jab
+   2	HitConfirmed	caster=player target=dummy skill=quickjab
+   2	Damage	caster=player target=dummy skill=quickjab dmg=15.000 kill=false life_after=35.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   5	CastPhase	caster=player skill=quickjab Active->Recovery
+   8	CastPhase	caster=player skill=quickjab Recovery->Done

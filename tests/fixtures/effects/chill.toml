@@ -1,0 +1,15 @@
+id = "chill"
+name = "Chill"
+duration = 5.0
+is_debuff = true
+
+# A non-DoT debuff applied with a SUB-100% chance (see chancebolt.toml's
+# `[effect_applications.apply_chance.damage_scaled]`). obelisk computes the apply
+# chance as `status_damage / target_max_health` and rolls it off the seeded
+# CombatRng, so whether `chill` lands for a given (seed, target-HP) pair is fully
+# DETERMINISTIC. Carries a stat modifier so it is a meaningful effect (and runs the
+# real rebuild path on apply); the probabilistic-apply behavior is what the
+# `probabilistic_effect_apply` golden records.
+[[modifiers]]
+stat = "increased_fire_damage"
+value = -10.0

@@ -1,0 +1,19 @@
+   2	CastBegan	caster=player skill=pummel dur=0.200
+   4	CastPhase	caster=player skill=pummel Windup->Active
+   4	HitWindow	caster=player skill=pummel window=flurry
+   4	HitConfirmed	caster=player target=dummy skill=pummel
+   4	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9995.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   5	HitConfirmed	caster=player target=dummy skill=pummel
+   5	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9990.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   6	HitConfirmed	caster=player target=dummy skill=pummel
+   6	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9985.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   7	HitConfirmed	caster=player target=dummy skill=pummel
+   7	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9980.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   8	HitConfirmed	caster=player target=dummy skill=pummel
+   8	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9975.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   9	HitConfirmed	caster=player target=dummy skill=pummel
+   9	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9970.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  10	CastPhase	caster=player skill=pummel Active->Recovery
+  10	HitConfirmed	caster=player target=dummy skill=pummel
+  10	Damage	caster=player target=dummy skill=pummel dmg=5.000 kill=false life_after=9965.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  13	CastPhase	caster=player skill=pummel Recovery->Done

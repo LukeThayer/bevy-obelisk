@@ -1,0 +1,8 @@
+   2	CastBegan	caster=player skill=chancebolt dur=0.600
+  19	CastPhase	caster=player skill=chancebolt Windup->Active
+  19	HitWindow	caster=player skill=chancebolt window=bolt
+  21	HitConfirmed	caster=player target=dummy skill=chancebolt
+  21	Damage	caster=player target=dummy skill=chancebolt dmg=20.000 kill=false life_after=20.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  21	EffectApplied	target=dummy effect=chill dur=5.000 stacks=1
+  25	CastPhase	caster=player skill=chancebolt Active->Recovery
+  37	CastPhase	caster=player skill=chancebolt Recovery->Done

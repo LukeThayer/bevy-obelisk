@@ -58,7 +58,7 @@ UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate 
 integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
 records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
 diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical, always-current list
-(**24 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
+(**27 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
 `faction_filter`, `apply_effect`); cast rejection + interrupt (`out_of_range`, `line_of_sight`,
 `already_casting`, `cooldown_gate`, `cast_rejected_insufficient_mana`, `cast_rejected_unknown_skill`,
 `cast_rejected_no_target`, `interrupt_cast`); effect triggers from every condition (`trigger_cascade`
@@ -68,7 +68,13 @@ diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical,
 `rage`, and `StrongestOnly` is dropped — it has no distinct observable trace through the public apply
 path, see the `feature_matrix()` doc comment); stat-driven effects via `ActorSpec::with_stat` /
 `with_self_effect` + the `DamageResolved` breakdown fields (`self_buff_boosts_damage`, `crit_strike`,
-`resistance_mitigates`, `cast_speed_scaling`); and loot/netcode (`loot_on_death`, `netcode_egress`).
+`resistance_mitigates`, `cast_speed_scaling`); loot/netcode (`loot_on_death`, `netcode_egress`); and
+hit-mode / delivery / probabilistic-apply (`everytick_hitbox` = a persistent `EveryTick` melee hitbox
+re-hitting one stationary enemy every tick → multiple `Damage` lines; `instant_cast` = a near-zero
+windup melee skill whose hit window opens at ~tick 2 vs firebolt's ~19; `probabilistic_effect_apply` =
+a `chancebolt` applying `chill` with a 50% `status_damage/max_life` chance, the seeded `CombatRng`
+making the roll deterministic so the golden faithfully records whether it applied — backed by a
+resolve-layer unit test pinning a PASS-seed and a FAIL-seed).
 `aoe_fan`/`stat_sources`/`vfx_cues` are intentionally NOT in the matrix (covered by direct unit tests
 / folded into `firebolt_kill`); see the `feature_matrix()` doc comment. When you add a scenario,
 update this count.
