@@ -1,0 +1,17 @@
+# Nested-table referrer: the enemy carries THIS table, whose only entry is a `type = "table"`
+# reference to the `treasure_inner` table (shipped as a separate fixture, loaded via a second
+# `with_drop_table_fixture`). tables_core::table::roll resolves the reference through the registry
+# and splices the inner table's drops in -> the `Loot` line carries the INNER table's drops, proving
+# nested resolution. `count = 2` on the table entry pulls the inner table twice.
+[table]
+id = "nested_chest"
+
+[[table.rolls]]
+count = 1
+weight = 1
+
+[[entries]]
+type = "table"
+id = "treasure_inner"
+count = [2, 2]
+weight = 1

@@ -58,7 +58,7 @@ UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate 
 integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
 records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
 diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical, always-current list
-(**27 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
+(**31 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
 `faction_filter`, `apply_effect`); cast rejection + interrupt (`out_of_range`, `line_of_sight`,
 `already_casting`, `cooldown_gate`, `cast_rejected_insufficient_mana`, `cast_rejected_unknown_skill`,
 `cast_rejected_no_target`, `interrupt_cast`); effect triggers from every condition (`trigger_cascade`
@@ -68,7 +68,15 @@ diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical,
 `rage`, and `StrongestOnly` is dropped — it has no distinct observable trace through the public apply
 path, see the `feature_matrix()` doc comment); stat-driven effects via `ActorSpec::with_stat` /
 `with_self_effect` + the `DamageResolved` breakdown fields (`self_buff_boosts_damage`, `crit_strike`,
-`resistance_mitigates`, `cast_speed_scaling`); loot/netcode (`loot_on_death`, `netcode_egress`); and
+`resistance_mitigates`, `cast_speed_scaling`); loot/netcode (`loot_on_death` = one guaranteed
+currency, plus four drop-table feature goldens reached via `ActorSpec::with_level/with_rarity_mult/
+with_quantity_mult` + `Scenario::with_drop_table_fixture`: `loot_multi_drop` = a `count = 2` roll
+option over an item+currency pool listing 2+ drops; `loot_quantity_scaling` = `quantity_mult = 3`
+on a fixed `[10,10]` currency table scaling the count to 30 (and the roll count to 3);
+`loot_rarity_scaling` = `rarity_mult = 50` on a rarity-gated table flipping the weighted pick to the
+rare `diamond` tier; `loot_nested_table` = a table whose entry is a `type = "table"` reference,
+splicing the inner table's `ruby` drops in — each with a `tests::loot_*` contrast test pinning the
+feature against the unscaled baseline; `netcode_egress`); and
 hit-mode / delivery / probabilistic-apply (`everytick_hitbox` = a persistent `EveryTick` melee hitbox
 re-hitting one stationary enemy every tick → multiple `Damage` lines; `instant_cast` = a near-zero
 windup melee skill whose hit window opens at ~tick 2 vs firebolt's ~19; `probabilistic_effect_apply` =

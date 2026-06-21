@@ -307,6 +307,87 @@ pub fn loot_on_death() -> Scenario {
         )
 }
 
+/// Shared spawn skeleton for the loot drop-table scenarios: a firebolt-caster player + a goblin
+/// (same 25-life / 0-mana / `Vec3(0,0,2)` placement as `loot_on_death`) carrying `drop_table`,
+/// with the cast scripted at tick 1. The goblin dies to the firebolt hit + burn DoT and rolls its
+/// table on death — deterministically, off the seeded `CombatRng` — emitting one `Loot` line. The
+/// caller picks the seed + roll-param builders + drop-table fixtures.
+fn loot_scenario(name: &str, seed: u64, drop_table: &str) -> Scenario {
+    Scenario::new(name, seed, 600)
+        .cast_asset("firebolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firebolt")
+        .actor(
+            "goblin",
+            Faction::Enemy,
+            25.0,
+            0.0,
+            Vec3::new(0.0, 0.0, 2.0),
+        )
+        .with_drop_table(drop_table)
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firebolt".into(),
+                aim: Aim::Entity("goblin".into()),
+            },
+        )
+}
+
+/// Loot: MULTIPLE guaranteed drops. The `multi_drop` table has a single roll-count option of
+/// `count = 2` (so it deterministically rolls its entry selection TWICE) over a two-entry pool
+/// (an item + a currency). The two rolls list 2 drops, so the `Loot source=goblin drops=[...]`
+/// line carries 2+ entries — proving multiple-drops-per-kill resolution (vs `loot_on_death`'s
+/// single currency). Faithfully records whichever pair the seed's two weighted selections produce.
+pub fn loot_multi_drop() -> Scenario {
+    loot_scenario("loot_multi_drop", 7, "multi_drop")
+        .describe("A drop table with two rolls over an item+currency pool lists 2+ drops on the Loot line.")
+        .with_drop_table_fixture("multi_drop", "tests/fixtures/loot/multi_drop.toml")
+}
+
+/// Loot: QUANTITY scaling. The `coin_pile` table drops a fixed `count = [10, 10]` currency; the
+/// goblin carries `.with_quantity_mult(3.0)`, threaded into the roll via `DropRollParams`.
+/// `tables_core`'s `apply_quantity_mult` scales the currency count by the multiplier, so the
+/// `Loot` line's `count` is ~3x the unscaled baseline (a count near 30 vs 10). Fixed `[10,10]`
+/// range so the multiplier is the only variable on the count (deterministic under the seed).
+/// The contrast is pinned by `loot_quantity_scaling_multiplier_raises_currency_count` below.
+pub fn loot_quantity_scaling() -> Scenario {
+    loot_scenario("loot_quantity_scaling", 7, "coin_pile")
+        .describe("An enemy with quantity_mult=3 on a fixed-count currency table drops ~3x the base count.")
+        .with_quantity_mult(3.0)
+        .with_drop_table_fixture("coin_pile", "tests/fixtures/loot/coin_pile.toml")
+}
+
+/// Loot: RARITY scaling. The `rarity_tiers` table has a heavily-weighted common currency
+/// (`copper`, weight 100, rarity_bonus 0) and a rare currency (`diamond`, weight 1, rarity_bonus
+/// 75). The roll's effective weight is `weight + rarity_bonus * rarity_mult`. The bonus is sized so
+/// that at the BASELINE rarity_mult=1.0 diamond is the UNDERDOG (1 + 75*1 = 76 vs copper's 100) AND
+/// seed 7's deciding draw genuinely lands `copper`; the goblin's `.with_rarity_mult(50.0)` lifts
+/// diamond's effective weight to 1 + 75*50 = 3751 (vs copper's 100, ~97%), flipping that SAME seed's
+/// pick to the higher-rarity tier -> the `Loot` line shows `diamond`. So the multiplier is
+/// LOAD-BEARING (it flips the pick), not a coincidental baseline minority draw. The baseline-picks-
+/// `copper` / scaled-picks-`diamond` contrast is pinned by
+/// `loot_rarity_scaling_multiplier_flips_to_rare_tier` below.
+pub fn loot_rarity_scaling() -> Scenario {
+    loot_scenario("loot_rarity_scaling", 7, "rarity_tiers")
+        .describe("An enemy with rarity_mult=50 on a rarity-gated table drops the higher-rarity tier (diamond).")
+        .with_rarity_mult(50.0)
+        .with_drop_table_fixture("rarity_tiers", "tests/fixtures/loot/rarity_tiers.toml")
+}
+
+/// Loot: NESTED table resolution. The goblin carries `nested_chest`, whose only entry is a
+/// `type = "table"` reference to `treasure_inner` (loaded via a SECOND `with_drop_table_fixture`).
+/// `tables_core`'s roll resolves the reference through the registry and splices the inner table's
+/// drops into the result, so the `Loot` line carries the INNER table's `ruby` currency — proving
+/// nested-table resolution across two fixtures. `count = [2, 2]` pulls the inner table twice.
+pub fn loot_nested_table() -> Scenario {
+    loot_scenario("loot_nested_table", 7, "nested_chest")
+        .describe("A drop table that references another table resolves the nested table's drops on the Loot line.")
+        .with_drop_table_fixture("nested_chest", "tests/fixtures/loot/nested_chest.toml")
+        .with_drop_table_fixture("treasure_inner", "tests/fixtures/loot/treasure_inner.toml")
+}
+
 /// Netcode egress: identical to `firebolt_kill` but recording the buffered `NetEvent`
 /// wire stream into the trace. The golden additionally contains `Net` lines carrying the
 /// stable String ids (the replication egress).
@@ -891,6 +972,10 @@ pub fn feature_matrix() -> Vec<Scenario> {
         cooldown_gate(),
         trigger_cascade(),
         loot_on_death(),
+        loot_multi_drop(),
+        loot_quantity_scaling(),
+        loot_rarity_scaling(),
+        loot_nested_table(),
         netcode_egress(),
         on_apply_triggers_skill(),
         on_expire_triggers_skill(),
@@ -986,6 +1071,105 @@ mod tests {
             resolve_chill(2),
             resolve_chill(2),
             "FAIL seed must reproduce"
+        );
+    }
+
+    /// Extract the single `Loot` line's detail (the `source=… drops=[…]` text) from a scenario's
+    /// recorded trace. Panics if there is no `Loot` line (a loot scenario that dropped nothing would
+    /// be a non-feature golden — we want the test to fail loudly).
+    fn loot_line(scenario: &super::Scenario) -> String {
+        let trace = crate::scenario::run::run_scenario(scenario);
+        trace
+            .lines
+            .iter()
+            .find(|l| l.kind == "Loot")
+            .map(|l| l.detail.clone())
+            .unwrap_or_else(|| panic!("scenario {} produced no Loot line", scenario.name))
+    }
+
+    /// Companion to `loot_multi_drop`: the `multi_drop` table's `count = 2` roll option lists 2+
+    /// drops, vs `loot_on_death`'s single-currency goblin table (1 drop). Pins that the golden
+    /// genuinely demonstrates "multiple guaranteed drops", not a coincidental single drop.
+    #[test]
+    fn loot_multi_drop_lists_two_or_more_drops() {
+        let detail = loot_line(&super::loot_multi_drop());
+        let count = detail.matches("id:").count() + detail.matches("base_type:").count();
+        assert!(
+            count >= 2,
+            "multi_drop must list 2+ drops (got {count}): {detail}"
+        );
+        // The single-currency goblin table lists exactly one drop — the contrast.
+        let baseline = loot_line(&super::loot_on_death());
+        let base_count = baseline.matches("id:").count() + baseline.matches("base_type:").count();
+        assert_eq!(
+            base_count, 1,
+            "loot_on_death baseline lists one drop: {baseline}"
+        );
+    }
+
+    /// Companion to `loot_quantity_scaling`: `.with_quantity_mult(3.0)` on the fixed `[10,10]`
+    /// `coin_pile` table must raise the dropped currency `count` well above the unscaled (mult 1.0)
+    /// baseline. Runs the SAME scenario with and without the multiplier through the real
+    /// `run_scenario` path and compares the parsed counts — proving the multiplier is what moves
+    /// the count, not the seed.
+    #[test]
+    fn loot_quantity_scaling_multiplier_raises_currency_count() {
+        fn gold_count(detail: &str) -> u32 {
+            // detail looks like: source=goblin drops=[Currency { id: "gold", count: 30 }]
+            let after = detail
+                .split("count: ")
+                .nth(1)
+                .expect("a count in the Loot line");
+            after
+                .trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse()
+                .expect("numeric count")
+        }
+        let scaled = gold_count(&loot_line(&super::loot_quantity_scaling()));
+        // Same scenario, same seed, but NO quantity_mult (falls back to the loot default 1.0).
+        let baseline_scenario = super::loot_scenario("loot_quantity_baseline", 7, "coin_pile")
+            .with_drop_table_fixture("coin_pile", "tests/fixtures/loot/coin_pile.toml");
+        let baseline = gold_count(&loot_line(&baseline_scenario));
+        assert_eq!(
+            baseline, 10,
+            "unscaled coin_pile drops the base count 10: {baseline}"
+        );
+        assert!(
+            scaled > baseline,
+            "quantity_mult=3 must raise the count above the base 10 (scaled={scaled}, base={baseline})"
+        );
+    }
+
+    /// Companion to `loot_rarity_scaling`: `.with_rarity_mult(50.0)` on the `rarity_tiers` table
+    /// flips the weighted selection to the higher-rarity `diamond` tier, whereas the unscaled
+    /// (mult 1.0) baseline picks the common `copper`. Proves the rarity multiplier — not the seed —
+    /// drives the tier, by running the same seeded scenario with and without it.
+    #[test]
+    fn loot_rarity_scaling_multiplier_flips_to_rare_tier() {
+        let scaled = loot_line(&super::loot_rarity_scaling());
+        assert!(
+            scaled.contains("diamond"),
+            "rarity_mult=50 must drop the rare tier (diamond): {scaled}"
+        );
+        // Same scenario, same seed, but NO rarity_mult (defaults to 1.0) -> the common tier.
+        let baseline_scenario = super::loot_scenario("loot_rarity_baseline", 7, "rarity_tiers")
+            .with_drop_table_fixture("rarity_tiers", "tests/fixtures/loot/rarity_tiers.toml");
+        let baseline = loot_line(&baseline_scenario);
+        assert!(
+            baseline.contains("copper") && !baseline.contains("diamond"),
+            "unscaled rarity_tiers drops the common tier (copper): {baseline}"
+        );
+    }
+
+    /// Companion to `loot_nested_table`: the `nested_chest` table's only entry is a `type = "table"`
+    /// reference to `treasure_inner`; the resolved `Loot` line must carry the INNER table's `ruby`
+    /// currency, proving nested resolution across two `with_drop_table_fixture` loads.
+    #[test]
+    fn loot_nested_table_resolves_inner_table_drops() {
+        let detail = loot_line(&super::loot_nested_table());
+        assert!(
+            detail.contains("ruby"),
+            "nested_chest must resolve treasure_inner's ruby currency: {detail}"
         );
     }
 }

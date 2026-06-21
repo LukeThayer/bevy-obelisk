@@ -1,0 +1,14 @@
+# Inner table referenced by `nested_chest` via a `type = "table"` entry. A single guaranteed
+# currency drop so the nested resolution produces a clean, identifiable signal in the `Loot` line.
+[table]
+id = "treasure_inner"
+
+[[table.rolls]]
+count = 1
+weight = 1
+
+[[entries]]
+type = "currency"
+id = "ruby"
+count = [2, 4]
+weight = 1

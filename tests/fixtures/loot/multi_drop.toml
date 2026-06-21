@@ -1,0 +1,23 @@
+# Multi-drop table: a SINGLE weighted roll-count option of `count = 2` (weight 1, the only
+# option) makes the table deterministically roll its entry-selection TWICE. With an item entry
+# and a currency entry (each weight 1), the two rolls list 2 drops -> the `Loot` line carries 2+
+# entries, exercising "multiple guaranteed drops" (vs loot_on_death's single drop). Which two of
+# {item, currency} the seed's two weighted selections land is recorded faithfully by the golden.
+[table]
+id = "multi_drop"
+
+[[table.rolls]]
+count = 2
+weight = 1
+
+[[entries]]
+type = "item"
+base_type = "rusty_dagger"
+currencies = ["transmute"]
+weight = 1
+
+[[entries]]
+type = "currency"
+id = "gold"
+count = [3, 5]
+weight = 1

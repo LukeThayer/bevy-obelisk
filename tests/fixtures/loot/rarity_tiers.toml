@@ -1,0 +1,32 @@
+# Rarity-gated table: two currency entries. The common `copper` carries a large flat `weight` and no
+# rarity bonus; the rare `diamond` carries a SMALL flat weight plus a `rarity_bonus`. The loot roll's
+# effective weight is `weight + rarity_bonus * rarity_mult` (tables_core::table::roll). The bonus is
+# deliberately sized so that at the BASELINE rarity_mult=1.0 diamond is the UNDERDOG
+# (1 + 75*1 = 76 vs copper's 100, ~43%), and seed 7's deciding draw lands in copper's majority slice
+# (so the baseline genuinely picks copper). A high rarity_mult lifts diamond to the dominant favorite
+# (1 + 75*50 = 3751 vs copper's 100, ~97%), flipping seed 7's SAME draw to the rare diamond. So the
+# multiplier is LOAD-BEARING: it is what flips the weighted pick from common copper to rare diamond,
+# not a coincidental baseline minority draw. (The brackets were found by sweeping the seed's draw `f`
+# in the now-removed `probe_rarity_draw` test: f is in (0.0357, 0.0370); copper is picked iff
+# 100/(100+wd) > f, so baseline wd=76 -> copper, scaled wd=3751 -> diamond.)
+# A single guaranteed roll keeps the line to one entry so the rarity tier is the only varying signal.
+[table]
+id = "rarity_tiers"
+
+[[table.rolls]]
+count = 1
+weight = 1
+
+[[entries]]
+type = "currency"
+id = "copper"
+count = 1
+weight = 100
+rarity_bonus = 0
+
+[[entries]]
+type = "currency"
+id = "diamond"
+count = 1
+weight = 1
+rarity_bonus = 75

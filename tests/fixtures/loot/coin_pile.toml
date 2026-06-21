@@ -1,0 +1,17 @@
+# Quantity-scaling table: a single guaranteed currency entry with a count RANGE. The loot roll's
+# `quantity_mult` scales BOTH the roll count and the per-drop currency count (see
+# tables_core::table::apply_quantity_mult): base `count` in [10, 10] * quantity_mult > 1 yields a
+# higher `count` in the `Loot` line than the unscaled (mult = 1.0) baseline. Fixed [10,10] range so
+# the only variable on the count is the multiplier (deterministic under the seeded CombatRng).
+[table]
+id = "coin_pile"
+
+[[table.rolls]]
+count = 1
+weight = 1
+
+[[entries]]
+type = "currency"
+id = "gold"
+count = [10, 10]
+weight = 1
