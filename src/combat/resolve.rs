@@ -25,6 +25,29 @@ pub struct HitOutcome {
     /// (from status effects applied to the defender during damage resolution). Surfaced so the
     /// caller can fire / observe them — never silently dropped.
     pub triggered: Vec<stat_core::TriggeredEffect>,
+    /// Skill-condition-triggered hits (e.g. an `on_crit` damage condition naming a `trigger_skill`)
+    /// that obelisk already resolved INLINE against the defender. Each is a real `CombatResult` the
+    /// defender already absorbed; `on_hit_confirmed` re-buckets these into their own secondary cast
+    /// (a distinct `TriggerFired` plus `DamageResolved`), instead of summing them into the primary
+    /// `total_damage`. These are NOT effect triggers (`triggered`) and are NEVER re-resolved.
+    pub triggered_skill_hits: Vec<TriggeredSkillHit>,
+}
+
+/// A skill-condition-triggered secondary hit, projected straight off the already-resolved
+/// `CombatResult` obelisk produced for the triggered `DamagePacket`. Carries the numbers needed to
+/// emit a distinct `TriggerFired` + `DamageResolved` for the secondary cast — never re-resolved.
+#[derive(Debug, Clone)]
+pub struct TriggeredSkillHit {
+    /// The secondary (triggered) skill id, e.g. "static_discharge" (`CombatResult.skill_id`).
+    pub secondary_skill_id: String,
+    /// The parent skill that fired the condition, e.g. "critzap" (`CombatResult.triggered_by`).
+    pub triggered_by: String,
+    pub total_damage: f64,
+    pub is_killing_blow: bool,
+    pub is_critical: bool,
+    pub damage_prevented: f64,
+    pub life_gained: f64,
+    pub mana_gained: f64,
 }
 
 /// Total damage prevented by every mitigation channel obelisk records on a single `CombatResult`:
@@ -69,22 +92,51 @@ pub fn resolve_one_hit(
     let tr =
         resolve_damage_with_triggers(caster, target, &skill_result.packets, skill, registry, rng);
 
-    let total_damage: f64 = tr.results.iter().map(|r| r.total_damage).sum();
-    let is_killing_blow = tr.results.iter().any(|r| r.is_killing_blow);
-    let effects_applied: Vec<Effect> = tr
-        .results
-        .iter()
-        .flat_map(|r| r.effects_applied.clone())
-        .collect();
+    // Partition the resolved results into the PRIMARY hit (`!is_triggered`) and skill-condition
+    // SECONDARY casts (`is_triggered`). obelisk already resolved every packet inline and mutated the
+    // defender once, so the triggered results' damage is ALREADY reflected in `tr.defender`; we only
+    // re-bucket the already-computed output. Triggered results are EXCLUDED from `total_damage` (the
+    // double-count fix) and each becomes a `TriggeredSkillHit` read straight off the result — never
+    // re-resolved (which would re-draw the seeded RNG / double-damage the defender).
+    //
+    // `is_critical` lives on the DamagePacket, not the CombatResult; pair each result with its source
+    // packet by position. `resolve_damage_with_triggers` pushes results in packet order until it
+    // (optionally) breaks early on a kill, so the resolved slice is a prefix of `packets` and
+    // `packets.iter().zip(tr.results.iter())` aligns every result with its packet.
+    let mut total_damage = 0.0;
+    let mut is_killing_blow = false;
+    let mut effects_applied: Vec<Effect> = Vec::new();
+    let mut is_critical = false;
+    let mut damage_prevented = 0.0;
+    let mut life_gained = 0.0;
+    let mut mana_gained = 0.0;
+    let mut triggered_skill_hits: Vec<TriggeredSkillHit> = Vec::new();
 
-    // Damage breakdown surfaced from the real resolution (never recomputed / fabricated):
-    //  - crit lives on the DamagePacket (each packet carries `is_critical`); a hit is "crit" if
-    //    any of its packets crit.
-    //  - mitigation + leech live on each CombatResult; sum across every resolved packet.
-    let is_critical = skill_result.packets.iter().any(|p| p.is_critical);
-    let damage_prevented: f64 = tr.results.iter().map(combat_result_prevented).sum();
-    let life_gained: f64 = tr.results.iter().map(combat_result_life_gained).sum();
-    let mana_gained: f64 = tr.results.iter().map(combat_result_mana_gained).sum();
+    for (packet, r) in skill_result.packets.iter().zip(tr.results.iter()) {
+        if r.is_triggered {
+            // Secondary cast: surface as its own hit, do NOT fold into the primary aggregates.
+            triggered_skill_hits.push(TriggeredSkillHit {
+                secondary_skill_id: r.skill_id.clone(),
+                triggered_by: r.triggered_by.clone().unwrap_or_default(),
+                total_damage: r.total_damage,
+                is_killing_blow: r.is_killing_blow,
+                is_critical: packet.is_critical,
+                damage_prevented: combat_result_prevented(r),
+                life_gained: combat_result_life_gained(r),
+                mana_gained: combat_result_mana_gained(r),
+            });
+        } else {
+            // Primary hit: feed the existing aggregates (identical to the pre-partition behavior
+            // when no triggered packets exist — the strict no-op for every untriggered scenario).
+            total_damage += r.total_damage;
+            is_killing_blow |= r.is_killing_blow;
+            effects_applied.extend(r.effects_applied.iter().cloned());
+            is_critical |= packet.is_critical;
+            damage_prevented += combat_result_prevented(r);
+            life_gained += combat_result_life_gained(r);
+            mana_gained += combat_result_mana_gained(r);
+        }
+    }
 
     // Surface ALL effect-condition triggers so none are silently dropped:
     //  - caster-side: produced by `use_skill_against` consuming self-effects (OnConsume, etc.).
@@ -108,6 +160,7 @@ pub fn resolve_one_hit(
         life_gained,
         mana_gained,
         triggered,
+        triggered_skill_hits,
     })
 }
 
@@ -255,6 +308,76 @@ base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
                 .any(|t| t.skill_id == "static_discharge" && t.effect_id == "charged"),
             "OnConsume trigger for 'charged' must be surfaced in HitOutcome.triggered, got {:?}",
             outcome.triggered
+        );
+    }
+
+    /// Skill-condition damage trigger: `critzap` carries an `on_crit` condition (`additional = true`)
+    /// that triggers `static_discharge`. With a 100% crit caster, critzap crits, so obelisk produces
+    /// a primary critzap packet (20 fire x 1.5 crit = 30) AND a triggered static_discharge packet.
+    /// The 100% crit chance applies to EVERY packet, so the triggered packet also crits
+    /// (25 lightning x 1.5 = 37.5) — faithful, deterministic obelisk behavior. The fix must surface
+    /// the secondary cast SEPARATELY:
+    ///   - the primary `outcome.total_damage` is 30 — it EXCLUDES the 37.5 triggered damage (the
+    ///     double-count fix; previously this was a summed 67.5);
+    ///   - exactly one `TriggeredSkillHit` is surfaced, carrying the secondary skill id
+    ///     `static_discharge`, its parent `critzap`, and its own 37.5 damage.
+    ///
+    /// The defender (high life, survives) absorbs BOTH inline, so its life drops by 30 + 37.5 = 67.5.
+    #[test]
+    fn skill_trigger_excludes_triggered_from_primary() {
+        crate::testkit::init_test_obelisk();
+        let registry =
+            stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills"))
+                .unwrap();
+        let skill = registry.get("critzap").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        // 100% flat crit chance => the seeded crit roll always passes (same path as `crit_strike`).
+        caster.critical_chance.flat = 100.0;
+
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 200.0;
+        target.current_life = 200.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+
+        // Primary critzap crit = 20 base * 1.5 = 30, and the triggered 25 is NOT folded in.
+        assert!(
+            (outcome.total_damage - 30.0).abs() < 1e-6,
+            "primary total_damage must EXCLUDE the triggered 25 (expected 30, got {})",
+            outcome.total_damage
+        );
+        assert!(outcome.is_critical, "critzap should have crit");
+
+        // Exactly one triggered secondary cast, surfaced with its own numbers.
+        assert_eq!(
+            outcome.triggered_skill_hits.len(),
+            1,
+            "expected exactly one triggered skill hit, got {:?}",
+            outcome.triggered_skill_hits
+        );
+        let th = &outcome.triggered_skill_hits[0];
+        assert_eq!(th.secondary_skill_id, "static_discharge");
+        assert_eq!(th.triggered_by, "critzap");
+        assert!(
+            th.is_critical,
+            "the triggered packet also crits under 100% crit"
+        );
+        assert!(
+            (th.total_damage - 37.5).abs() < 1e-6,
+            "triggered static_discharge should deal 25 x 1.5 crit = 37.5, got {}",
+            th.total_damage
+        );
+
+        // The defender absorbed BOTH inline: 200 - 30 - 37.5 = 132.5.
+        assert!(
+            (target.current_life - 132.5).abs() < 1e-6,
+            "defender should have taken 30 + 37.5 = 67.5 (life 200 -> 132.5), got {}",
+            target.current_life
         );
     }
 

@@ -1,0 +1,9 @@
+   2	CastBegan	caster=player skill=critzap dur=0.600
+  19	CastPhase	caster=player skill=critzap Windup->Active
+  19	HitWindow	caster=player skill=critzap window=bolt
+  21	HitConfirmed	caster=player target=dummy skill=critzap
+  21	Damage	caster=player target=dummy skill=critzap dmg=30.000 kill=false life_after=132.500 crit=true prevented=0.000 life_gained=0.000 mana_gained=0.000
+  21	TriggerFired	source=player target=dummy skill=static_discharge effect=
+  21	Damage	caster=player target=dummy skill=static_discharge dmg=37.500 kill=false life_after=132.500 crit=true prevented=0.000 life_gained=0.000 mana_gained=0.000
+  25	CastPhase	caster=player skill=critzap Active->Recovery
+  37	CastPhase	caster=player skill=critzap Recovery->Done

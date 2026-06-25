@@ -58,12 +58,16 @@ UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate 
 integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
 records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
 diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical, always-current list
-(**31 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
+(**32 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
 `faction_filter`, `apply_effect`); cast rejection + interrupt (`out_of_range`, `line_of_sight`,
 `already_casting`, `cooldown_gate`, `cast_rejected_insufficient_mana`, `cast_rejected_unknown_skill`,
 `cast_rejected_no_target`, `interrupt_cast`); effect triggers from every condition (`trigger_cascade`
 = OnConsume, `on_apply_triggers_skill`, `on_expire_triggers_skill`,
-`on_max_stacks_triggers_and_consumes`); effect stacking modes (`effect_refresh_stacking` = Refresh,
+`on_max_stacks_triggers_and_consumes`); skill-condition damage triggers casting their secondary skill
+(`skill_trigger_secondary_cast` = an `on_crit` damage condition surfacing `static_discharge` as its
+own `TriggerFired` + `Damage` line, distinct from the primary crit — the packet-level/pre-resolved
+trigger path, parallel to the effect-condition `TriggeredEffect` cascade); effect stacking modes
+(`effect_refresh_stacking` = Refresh,
 `effect_unlimited_stacking` = Unlimited; the `Limited` mode is `on_max_stacks_triggers_and_consumes`'s
 `rage`, and `StrongestOnly` is dropped — it has no distinct observable trace through the public apply
 path, see the `feature_matrix()` doc comment); stat-driven effects via `ActorSpec::with_stat` /

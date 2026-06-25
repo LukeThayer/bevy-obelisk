@@ -925,6 +925,47 @@ pub fn probabilistic_effect_apply() -> Scenario {
         )
 }
 
+/// Skill-condition damage trigger casts its secondary skill (the follow-up to `trigger_cascade`,
+/// which covers the EFFECT-condition path). The player casts `critzap` — a fire bolt carrying an
+/// `on_crit` `SkillCondition` (`additional = true`) naming `trigger_skill = "static_discharge"` —
+/// with a 100% flat critical-strike chance (`AddedCriticalChance` = 100, via `.with_stat`, the same
+/// stat-rebuild path as `crit_strike`). The seeded crit roll always passes, so critzap crits and the
+/// `on_crit` condition fires.
+///
+/// obelisk's `calculate_damage_with_triggers` builds a primary critzap packet PLUS an
+/// `is_triggered` static_discharge packet, and `resolve_damage_with_triggers` resolves BOTH inline
+/// against the dummy. The fix (`resolve_one_hit`'s partition + `on_hit_confirmed`'s emit) surfaces
+/// the secondary skill as its OWN cast rather than folding its damage into the primary total. The
+/// 100% crit chance applies to every packet, so the triggered static_discharge also crits. The
+/// golden shows the proven three-line shape (parity with `trigger_cascade`):
+///   `Damage skill=critzap dmg=30.000 crit=true` (20 base x the 1.5 crit multiplier — NOT inflated
+///   by the 37.5 static_discharge, the double-count fix) ->
+///   `TriggerFired skill=static_discharge effect=` (empty effect_id: a skill condition has no
+///   originating effect) ->
+///   `Damage skill=static_discharge dmg=37.500 crit=true` (25 base x 1.5 crit).
+///
+/// The dummy carries 200 life (> 30 + 37.5 = 67.5) so it SURVIVES both hits (kill=false on each),
+/// recording cleanly. A resolve-layer unit test (`tests::skill_trigger_excludes_triggered_from_primary`)
+/// pins that the primary `outcome.total_damage` EXCLUDES the triggered damage and the triggered hit
+/// is surfaced in `triggered_skill_hits`.
+pub fn skill_trigger_secondary_cast() -> Scenario {
+    Scenario::new("skill_trigger_secondary_cast", 42, 60)
+        .describe("Crit-triggering critzap casts its secondary skill: the on_crit damage condition surfaces static_discharge as its OWN TriggerFired + Damage line (37.5, also crit) instead of inflating the primary crit (30) — Damage(critzap,30,crit) -> TriggerFired(static_discharge) -> Damage(static_discharge,37.5,crit).")
+        .cast_asset("critzap")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("critzap")
+        .with_stat(StatType::AddedCriticalChance, 100.0)
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "critzap".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -993,6 +1034,7 @@ pub fn feature_matrix() -> Vec<Scenario> {
         everytick_hitbox(),
         instant_cast(),
         probabilistic_effect_apply(),
+        skill_trigger_secondary_cast(),
     ]
 }
 

@@ -71,6 +71,44 @@ pub fn on_hit_confirmed(
         });
     }
 
+    // Skill-condition damage triggers (e.g. an `on_crit` condition naming a `trigger_skill`):
+    // obelisk ALREADY resolved each of these packets inline in `resolve_one_hit` and the defender
+    // already absorbed the damage. Surface each as its OWN secondary cast — a distinct
+    // `TriggerFired` + `DamageResolved` — instead of folding it into the primary `total_damage`.
+    // These are deliberately NOT added to the effect-trigger worklist below and are NEVER
+    // re-resolved (no `resolve_damage_with_rng`): re-firing would double-damage the defender and
+    // re-draw the seeded RNG. `effect_id` is empty because a skill condition has no originating
+    // effect (this distinguishes it from the effect-cascade `TriggerFired`).
+    for th in &outcome.triggered_skill_hits {
+        commands.trigger(TriggerFired {
+            source: ev.caster,
+            target: ev.target,
+            skill_id: th.secondary_skill_id.clone(),
+            effect_id: String::new(),
+        });
+        commands.trigger(DamageResolved {
+            caster: ev.caster,
+            target: ev.target,
+            skill_id: th.secondary_skill_id.clone(),
+            total_damage: th.total_damage,
+            is_killing_blow: th.is_killing_blow,
+            // The defender was already mutated by `resolve_one_hit` (all packets, including this
+            // triggered one), so its current life already reflects this secondary hit.
+            life_after: target_attrs.0.current_life,
+            mana_spent: 0.0,
+            is_critical: th.is_critical,
+            damage_prevented: th.damage_prevented,
+            life_gained: th.life_gained,
+            mana_gained: th.mana_gained,
+        });
+        if th.is_killing_blow {
+            commands.trigger(EntityDied {
+                target: ev.target,
+                killer: Some(ev.caster),
+            });
+        }
+    }
+
     // Process effect-condition triggers (OnApply/OnMaxStacks/OnConsume, etc.) produced by this
     // hit. Every trigger is made observable via `TriggerFired` (never silently dropped). On-hit
     // triggered SKILLS that exist in the registry are additionally auto-fired through the same
