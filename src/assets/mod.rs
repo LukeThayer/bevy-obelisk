@@ -91,7 +91,7 @@ pub enum CastDelivery {
 }
 
 /// RON loader for `*.cast.ron`.
-#[derive(Default)]
+#[derive(Default, TypePath)]
 pub struct CastTimelineLoader;
 
 impl AssetLoader for CastTimelineLoader {
