@@ -1,0 +1,20 @@
+id = "bigzap"
+name = "Big Zap"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+
+# When the hit's total damage exceeds a threshold BELOW this skill's damage (50 > 30),
+# the damage_over_threshold condition fires and additionally CASTs static_discharge as a
+# real secondary skill (additional = true => the primary 50 fire hit still lands; the
+# big-hit trigger fires on top). Parallel to critzap's on_crit condition, keyed on the
+# damage-over-threshold post-calc condition.
+[[conditions]]
+trigger_skill = "static_discharge"
+type = "damage_over_threshold"
+threshold = 30.0
+additional = true
+
+[damage]
+base_damages = [{ type = "fire", min = 50.0, max = 50.0 }]

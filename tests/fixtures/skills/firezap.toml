@@ -1,0 +1,19 @@
+id = "firezap"
+name = "Fire Zap"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+
+# When the hit deals FIRE damage (it always does — 20 base fire), additionally CAST
+# static_discharge as a real secondary skill (additional = true => the primary firezap
+# fire hit still lands; the damage_type_dealt=fire condition fires on top). Parallel to
+# critzap's on_crit condition, but keyed on the damage-type-dealt post-calc condition.
+[[conditions]]
+trigger_skill = "static_discharge"
+type = "damage_type_dealt"
+damage_type = "fire"
+additional = true
+
+[damage]
+base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]

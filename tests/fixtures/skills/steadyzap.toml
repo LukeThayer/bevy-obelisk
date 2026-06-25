@@ -1,0 +1,19 @@
+id = "steadyzap"
+name = "Steady Zap"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+
+# When the hit is NOT a critical strike, the on_non_crit condition fires and additionally
+# CASTs static_discharge as a real secondary skill (additional = true => the primary fire
+# hit still lands; the non-crit trigger fires on top). The scenario's caster has NO crit
+# stat, so the seeded crit roll never passes and every hit is a non-crit -> the condition
+# fires. This is the deliberate CONTRAST to critzap, which fires on the crit branch.
+[[conditions]]
+trigger_skill = "static_discharge"
+type = "on_non_crit"
+additional = true
+
+[damage]
+base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]

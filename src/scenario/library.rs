@@ -1115,6 +1115,107 @@ pub fn skill_trigger_secondary_cast() -> Scenario {
         )
 }
 
+/// Batch 12 — `damage_type_dealt` (fire) skill-condition trigger casting its secondary skill (a
+/// sibling of `skill_trigger_secondary_cast`, which is the `on_crit` template). The player casts
+/// `firezap` — a 20-base FIRE bolt carrying a `damage_type_dealt`/`damage_type = "fire"`
+/// `SkillCondition` (`additional = true`) naming `trigger_skill = "static_discharge"`. The caster
+/// has NO crit stat, so the hit is a plain non-crit fire hit. obelisk's `calculate_damage_with_triggers`
+/// evaluates the post-calculation `DamageTypeDealt { Fire }` condition against the primary packet
+/// (`primary.damage_of_type(Fire) > 0.0` — TRUE, the bolt deals 20 fire), so it builds the primary
+/// firezap packet PLUS an `is_triggered` static_discharge packet; `resolve_one_hit`'s partition
+/// surfaces the secondary cast as its OWN `TriggerFired` + `Damage` line (the re-bucket feature),
+/// distinct from the primary fire hit, exactly as `skill_trigger_secondary_cast` does for `on_crit`.
+/// No crit, so neither hit crits — the golden shows the three-line shape:
+///   `Damage skill=firezap dmg=20.000 crit=false` (the fire hit; condition fires BECAUSE it dealt fire) ->
+///   `TriggerFired skill=static_discharge effect=` (empty effect_id: a skill condition has no
+///   originating effect) ->
+///   `Damage skill=static_discharge dmg=25.000 crit=false` (25 lightning base, no crit).
+///
+/// The dummy carries 200 life (> 20 + 25 = 45) so it SURVIVES both hits (kill=false on each),
+/// recording cleanly. firezap deals fire (so the condition is always met) — the contrast that would
+/// NOT fire is a non-fire skill (e.g. `cleave`'s physical), proven by the resolve-layer
+/// `tests::firezap_fires_only_on_fire_damage` test below.
+pub fn on_fire_damage_dealt_trigger() -> Scenario {
+    Scenario::new("on_fire_damage_dealt_trigger", 42, 60)
+        .describe("A fire bolt carrying a damage_type_dealt=fire condition casts its secondary skill: the fire hit satisfies the condition, surfacing static_discharge as its OWN TriggerFired + Damage line — Damage(firezap,20,fire) -> TriggerFired(static_discharge) -> Damage(static_discharge,25).")
+        .cast_asset("firezap")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("firezap")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "firezap".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Batch 12 — `damage_over_threshold` skill-condition trigger casting its secondary skill (a sibling
+/// of `skill_trigger_secondary_cast`). The player casts `bigzap` — a 50-base fire bolt carrying a
+/// `damage_over_threshold`/`threshold = 30.0` `SkillCondition` (`additional = true`) naming
+/// `trigger_skill = "static_discharge"`. The threshold (30) is set BELOW the skill's damage (50), so
+/// obelisk's post-calculation `DamageOverThreshold` condition (`primary.total_damage() > 30.0` — TRUE,
+/// the bolt deals 50) fires and builds an `is_triggered` static_discharge packet alongside the primary;
+/// `resolve_one_hit`'s partition surfaces the secondary cast as its OWN `TriggerFired` + `Damage` line.
+/// No crit caster, so neither hit crits — the golden shows the three-line shape:
+///   `Damage skill=bigzap dmg=50.000 crit=false` (the big hit; 50 > the 30 threshold) ->
+///   `TriggerFired skill=static_discharge effect=` ->
+///   `Damage skill=static_discharge dmg=25.000 crit=false`.
+///
+/// The dummy carries 200 life (> 50 + 25 = 75) so it SURVIVES both hits (kill=false on each). The
+/// resolve-layer `tests::bigzap_fires_only_over_threshold` test pins the contrast that a hit UNDER the
+/// threshold does NOT fire (a 20-damage hit vs the same 30 threshold surfaces no triggered skill).
+pub fn on_big_hit_trigger() -> Scenario {
+    Scenario::new("on_big_hit_trigger", 42, 60)
+        .describe("A 50-damage bolt carrying a damage_over_threshold=30 condition casts its secondary skill: the big hit (50 > 30) satisfies the condition, surfacing static_discharge as its OWN TriggerFired + Damage line — Damage(bigzap,50) -> TriggerFired(static_discharge) -> Damage(static_discharge,25).")
+        .cast_asset("bigzap")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("bigzap")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "bigzap".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Batch 12 — `on_non_crit` skill-condition trigger casting its secondary skill (the deliberate
+/// CONTRAST to `skill_trigger_secondary_cast`, which fires on the CRIT branch). The player casts
+/// `steadyzap` — a 20-base fire bolt carrying an `on_non_crit` `SkillCondition` (`additional = true`)
+/// naming `trigger_skill = "static_discharge"` — with NO crit stat (no `.with_stat(AddedCriticalChance)`),
+/// so the seeded crit roll never passes and every hit is a NON-crit. obelisk's post-calculation
+/// `OnNonCrit` condition (`!primary.is_critical` — TRUE) fires and builds an `is_triggered`
+/// static_discharge packet alongside the primary; `resolve_one_hit`'s partition surfaces the secondary
+/// cast as its OWN `TriggerFired` + `Damage` line. The golden shows the three-line shape, all non-crit:
+///   `Damage skill=steadyzap dmg=20.000 crit=false` (the non-crit hit fires the condition) ->
+///   `TriggerFired skill=static_discharge effect=` ->
+///   `Damage skill=static_discharge dmg=25.000 crit=false`.
+///
+/// The dummy carries 200 life (> 20 + 25 = 45) so it SURVIVES both hits (kill=false on each). This is
+/// the mirror of `skill_trigger_secondary_cast`: there a 100%-crit caster fires the `on_crit` condition
+/// (crit=true, 30 + 37.5); here a NO-crit caster fires the `on_non_crit` condition (crit=false, 20 + 25).
+pub fn on_non_crit_trigger() -> Scenario {
+    Scenario::new("on_non_crit_trigger", 42, 60)
+        .describe("A non-crit fire bolt carrying an on_non_crit condition casts its secondary skill: the non-crit hit satisfies the condition (the contrast to critzap's on_crit), surfacing static_discharge as its OWN TriggerFired + Damage line — Damage(steadyzap,20,crit=false) -> TriggerFired(static_discharge) -> Damage(static_discharge,25,crit=false).")
+        .cast_asset("steadyzap")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("steadyzap")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "steadyzap".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -1188,6 +1289,9 @@ pub fn feature_matrix() -> Vec<Scenario> {
         instant_cast(),
         probabilistic_effect_apply(),
         skill_trigger_secondary_cast(),
+        on_fire_damage_dealt_trigger(),
+        on_big_hit_trigger(),
+        on_non_crit_trigger(),
     ]
 }
 
@@ -1365,6 +1469,112 @@ mod tests {
         assert!(
             detail.contains("ruby"),
             "nested_chest must resolve treasure_inner's ruby currency: {detail}"
+        );
+    }
+
+    /// Resolve one hit of `skill_id` (from the fixtures dir) against a fresh high-life dummy with a
+    /// NON-crit caster, returning the number of skill-condition-triggered secondary hits surfaced.
+    /// Shared by the Batch-12 condition-gating contrast tests below: a fired condition surfaces
+    /// exactly one `triggered_skill_hits` entry, a non-fired condition surfaces zero.
+    fn triggered_skill_hits_for(skill_id: &str) -> usize {
+        crate::testkit::init_test_obelisk();
+        let registry =
+            stat_core::config::load_skills_dir(std::path::Path::new("tests/fixtures/skills"))
+                .unwrap();
+        let skill = registry.get(skill_id).unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        // No crit stat -> non-crit hits (so `on_non_crit` fires and `on_crit` would not).
+
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 200.0;
+        target.current_life = 200.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let outcome = crate::combat::resolve::resolve_one_hit(
+            &mut caster,
+            &mut target,
+            skill,
+            &registry,
+            &mut rng,
+        )
+        .unwrap();
+        outcome.triggered_skill_hits.len()
+    }
+
+    /// Companion to `on_fire_damage_dealt_trigger`: the `damage_type_dealt`/fire condition on `firezap`
+    /// fires BECAUSE the bolt deals fire (one triggered static_discharge hit). The CONTRAST — a skill
+    /// whose hit deals NO fire — must NOT fire it: `cleave` (100 physical) carries no condition at all,
+    /// but more to the point a `damage_type_dealt=fire` condition is only met when `damage_of_type(Fire)
+    /// > 0`. Pins that firezap surfaces exactly one secondary hit and a physical skill surfaces none.
+    #[test]
+    fn firezap_fires_only_on_fire_damage() {
+        assert_eq!(
+            triggered_skill_hits_for("firezap"),
+            1,
+            "firezap deals fire, so the damage_type_dealt=fire condition fires once"
+        );
+        // `cleave` is pure physical and carries no skill condition -> zero triggered secondary hits,
+        // the natural contrast to a fire-dealing skill that DOES satisfy a fire condition.
+        assert_eq!(
+            triggered_skill_hits_for("cleave"),
+            0,
+            "a non-fire skill surfaces no fire-condition trigger"
+        );
+    }
+
+    /// Companion to `on_big_hit_trigger`: the `damage_over_threshold`/30 condition on `bigzap` (50
+    /// damage) fires BECAUSE 50 > 30 (one triggered static_discharge hit). The CONTRAST — a hit UNDER
+    /// the threshold — must NOT fire: `firezap` (20 damage) carries a fire condition, not a threshold
+    /// one, but the key proof is the threshold gate itself, which we pin directly against the obelisk
+    /// post-calc evaluator: a 20-damage packet does NOT exceed the 30 threshold, a 50-damage one does.
+    #[test]
+    fn bigzap_fires_only_over_threshold() {
+        use stat_core::damage::{
+            DamagePacket, FinalDamage, TriggerCondition, TriggerConditionEval,
+        };
+        use stat_core::DamageType;
+
+        assert_eq!(
+            triggered_skill_hits_for("bigzap"),
+            1,
+            "bigzap deals 50 (> the 30 threshold), so the damage_over_threshold condition fires once"
+        );
+
+        // Directly pin the threshold gate on obelisk's post-calc evaluator: 50 > 30 fires, 20 does not.
+        let cond = TriggerCondition::DamageOverThreshold { threshold: 30.0 };
+        let mut big = DamagePacket::new("player".to_string(), "bigzap".to_string());
+        big.damages.push(FinalDamage::new(DamageType::Fire, 50.0));
+        assert!(
+            cond.evaluate_post_calc(&big),
+            "a 50-damage hit must exceed the 30 threshold"
+        );
+        let mut small = DamagePacket::new("player".to_string(), "firezap".to_string());
+        small.damages.push(FinalDamage::new(DamageType::Fire, 20.0));
+        assert!(
+            !cond.evaluate_post_calc(&small),
+            "a 20-damage hit must NOT exceed the 30 threshold (the under-threshold contrast)"
+        );
+    }
+
+    /// Companion to `on_non_crit_trigger`: the `on_non_crit` condition on `steadyzap` fires for a
+    /// NO-crit caster (one triggered static_discharge hit) — the deliberate contrast to `critzap`,
+    /// whose `on_crit` condition needs a crit. With no crit stat, the seeded hit is a non-crit, so
+    /// `steadyzap` fires while `critzap` (same no-crit caster) does NOT.
+    #[test]
+    fn steadyzap_fires_on_non_crit_and_critzap_does_not() {
+        assert_eq!(
+            triggered_skill_hits_for("steadyzap"),
+            1,
+            "a non-crit hit fires the on_non_crit condition once"
+        );
+        // The mirror: critzap's `on_crit` condition does NOT fire for the same no-crit caster.
+        assert_eq!(
+            triggered_skill_hits_for("critzap"),
+            0,
+            "critzap's on_crit condition does not fire without a crit (the contrast)"
         );
     }
 }

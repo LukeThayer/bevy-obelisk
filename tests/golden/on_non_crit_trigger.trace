@@ -1,0 +1,9 @@
+   2	CastBegan	caster=player skill=steadyzap dur=0.600
+  19	CastPhase	caster=player skill=steadyzap Windup->Active
+  19	HitWindow	caster=player skill=steadyzap window=bolt
+  21	HitConfirmed	caster=player target=dummy skill=steadyzap
+  21	Damage	caster=player target=dummy skill=steadyzap dmg=20.000 kill=false life_after=155.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  21	TriggerFired	source=player target=dummy skill=static_discharge effect=
+  21	Damage	caster=player target=dummy skill=static_discharge dmg=25.000 kill=false life_after=155.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  25	CastPhase	caster=player skill=steadyzap Active->Recovery
+  37	CastPhase	caster=player skill=steadyzap Recovery->Done
