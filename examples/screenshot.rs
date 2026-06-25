@@ -224,10 +224,7 @@ fn setup_scene(
     // window uses). It renders to the off-screen image, not a window.
     commands.spawn((
         Camera3d::default(),
-        Camera {
-            target: render_target,
-            ..default()
-        },
+        render_target,
         Tonemapping::None,
         Transform::from_xyz(7.0, 7.0, -3.0).looking_at(Vec3::new(0.0, 0.5, 2.0), Vec3::Y),
     ));
@@ -508,13 +505,13 @@ fn setup_render_target(
 
     // Texture rendered to (needs COPY_SRC so we can read it back).
     let mut render_target_image =
-        Image::new_target_texture(size.width, size.height, TextureFormat::bevy_default());
+        Image::new_target_texture(size.width, size.height, TextureFormat::bevy_default(), None);
     render_target_image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let render_target_image_handle = images.add(render_target_image);
 
     // Texture copied to on the CPU side.
     let cpu_image =
-        Image::new_target_texture(size.width, size.height, TextureFormat::bevy_default());
+        Image::new_target_texture(size.width, size.height, TextureFormat::bevy_default(), None);
     let cpu_image_handle = images.add(cpu_image);
 
     commands.spawn(ImageCopier::new(
@@ -684,7 +681,7 @@ fn receive_image_from_buffer(
 
         // Natively we must poll the device for the map to complete.
         render_device
-            .poll(PollType::Wait)
+            .poll(PollType::wait_indefinitely())
             .expect("Failed to poll device for map async");
 
         r.recv().expect("Failed to receive the map_async message");
