@@ -717,6 +717,155 @@ pub fn cast_speed_scaling() -> Scenario {
         )
 }
 
+/// Armour mitigates (Batch 11, secondary-defense layer): a DUMMY target with 500 armour
+/// (`AddedArmour` = 500, flowed through obelisk's real stat-rebuild path via `.with_stat` —
+/// `AddedArmour` lands on `StatBlock::armour` as flat) is hit by `cleave` (100 PHYSICAL damage).
+/// Physical damage is mitigated by ARMOUR, not resistance: obelisk's `calculate_armour_reduction`
+/// applies the PoE diminishing-returns formula `reduction% = armour / (armour + C * damage)` with
+/// the default `armour.damage_constant = 5.0`, so `500 / (500 + 5 * 100) = 500 / 1000 = 50%`. The
+/// 100 physical is reduced to `100 * (1 - 0.50) = 50.000` and `50.000` is prevented. The Damage line
+/// shows `prevented=50.000` (> 0) AND `dmg=50.000`, half the un-armoured `100.000` baseline
+/// (`cone_cleave`). `damage_prevented` is summed from the real obelisk
+/// `CombatResult.damage_reduced_by_armour` (see `combat_result_prevented`). This is the armour code
+/// path (`src/defense/armour.rs`), a DISTINCT mitigation layer from `resistance_mitigates`.
+///
+/// The dummy carries 200 life (> 50) so it SURVIVES the mitigated hit (kill=false); cleave applies no
+/// status effect, so the Damage line records cleanly with the prevented amount and no DoT follows.
+/// Uses `.with_stat` only — no new fixture or production change needed.
+pub fn armour_mitigates() -> Scenario {
+    Scenario::new("armour_mitigates", 42, 60)
+        .describe("A target with 500 armour halves cleave's physical hit (PoE diminishing-returns formula): the Damage line reads prevented=50.000 and dmg=50.000, down from the un-armoured 100.000.")
+        .cast_asset("cleave")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("cleave")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .with_stat(StatType::AddedArmour, 500.0)
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "cleave".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Physical damage reduction mitigates (Batch 11, secondary-defense layer): a DUMMY target with 40%
+/// PHYSICAL damage reduction (`PhysicalDamageReduction` = 40, flowed through obelisk's real
+/// stat-rebuild path via `.with_stat` — landing on `StatBlock::physical_damage_reduction`) is hit by
+/// `cleave` (100 PHYSICAL damage). This is a SEPARATE flat-percent physical layer applied AFTER
+/// armour in obelisk's resolution (`resolution.rs` Step 2b: `reduced = phys * dr` with
+/// `dr = clamp(value, 0, 90) / 100`); here the target has NO armour, so ONLY this channel engages.
+/// The 100 physical is reduced to `100 * (1 - 0.40) = 60.000` and `40.000` is prevented. The Damage
+/// line shows `prevented=40.000` (> 0) AND `dmg=60.000`, below the un-reduced `100.000` baseline
+/// (`cone_cleave`). `damage_prevented` is summed from the real obelisk
+/// `CombatResult.damage_reduced_by_physical_dr` (see `combat_result_prevented`) — a DISTINCT channel
+/// from armour (`damage_reduced_by_armour`) and the generic reduction (`damage_reduced_by_dr`).
+///
+/// The dummy carries 200 life (> 60) so it SURVIVES the mitigated hit (kill=false). Uses `.with_stat`
+/// only — no new fixture or production change needed.
+pub fn physical_damage_reduction_mitigates() -> Scenario {
+    Scenario::new("physical_damage_reduction_mitigates", 42, 60)
+        .describe("A target with 40% physical damage reduction cuts cleave's physical hit: the Damage line reads prevented=40.000 and dmg=60.000, down from the un-reduced 100.000.")
+        .cast_asset("cleave")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("cleave")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .with_stat(StatType::PhysicalDamageReduction, 40.0)
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "cleave".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Generic damage reduction mitigates (Batch 11, secondary-defense layer): a DUMMY target whose
+/// reduced-damage-taken layer is set to a 30% global cut, hit by `cleave` (100 damage). Unlike
+/// armour/physical-DR (which only touch physical), `reduced_damage_taken` is the GLOBAL final
+/// multiplier obelisk applies to ALL damage types (`resolution.rs` Step 3b:
+/// `reduced = final * clamp(field, 0, 90) / 100`). The 100 is reduced to `100 * (1 - 0.30) = 70.000`
+/// and `30.000` is prevented. The Damage line shows `prevented=30.000` (> 0) AND `dmg=70.000`, below
+/// the un-reduced `100.000` baseline (`cone_cleave`). `damage_prevented` is summed from the real
+/// obelisk `CombatResult.damage_reduced_by_dr` (see `combat_result_prevented`) — the generic-DR
+/// channel, DISTINCT from armour, physical-DR, resistance, and oneshot.
+///
+/// SCALING NOTE (faithful to a real obelisk quirk): for `ReducedDamageTaken` the StatType→field path
+/// already divides by 100 (`apply_stat_type`: `reduced_damage_taken += value / 100`), but the
+/// resolution step consumes the field as a raw PERCENT and divides by 100 AGAIN
+/// (`dr = field.clamp(0, 90) / 100`). The net reduction fraction is therefore `value / 10000`, so a
+/// 30% cut needs `value = 3000` (→ field 30.0 → `30/100 = 0.30`). (Contrast `FireResistance` = 50 in
+/// `resistance_mitigates`, whose field is consumed directly as a percent — no double divide.) The
+/// golden records obelisk's REAL behavior under this value; nothing is faked.
+///
+/// The dummy carries 200 life (> 70) so it SURVIVES the mitigated hit (kill=false). Uses `.with_stat`
+/// only — no new fixture or production change needed.
+pub fn damage_reduction_mitigates() -> Scenario {
+    Scenario::new("damage_reduction_mitigates", 42, 60)
+        .describe("A target with 30% reduced damage taken (global) cuts cleave's hit: the Damage line reads prevented=30.000 and dmg=70.000, down from the un-reduced 100.000.")
+        .cast_asset("cleave")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("cleave")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .with_stat(StatType::ReducedDamageTaken, 3000.0)
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "cleave".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Oneshot protection caps (Batch 11, secondary-defense layer): a DUMMY target with 19000 oneshot
+/// protection (`AddedOneshotProtection` = 19000, flowed through obelisk's real stat-rebuild path via
+/// `.with_stat` — landing on `StatBlock::oneshot_protection`) is hit by `cleave` (100 damage). Oneshot
+/// protection imposes a per-hit DAMAGE CAP that engages only when the rating exceeds the attacker's
+/// accuracy (default 1000): `cap = accuracy / (1 + oneshot_protection / scale_factor)` with the
+/// default `evasion.scale_factor = 1000` → `1000 / (1 + 19000 / 1000) = 1000 / 20 = 50`. The 100 hit
+/// EXCEEDS the 50 cap, so it is capped to `50.000` and `50.000` is prevented (`resolution.rs` Step 3,
+/// `apply_oneshot_protection`). The Damage line shows `prevented=50.000` (> 0) AND `dmg=50.000`, below
+/// the un-capped `100.000` baseline (`cone_cleave`). `damage_prevented` is summed from the real
+/// obelisk `CombatResult.damage_prevented_by_oneshot` (see `combat_result_prevented`) — a DISTINCT
+/// mitigation layer (`src/defense/evasion.rs`) from armour, physical-DR, generic-DR, and resistance.
+///
+/// The dummy carries 200 life (> 50) so it SURVIVES the capped hit (kill=false). Uses `.with_stat`
+/// only — no new fixture or production change needed.
+pub fn oneshot_protection_caps() -> Scenario {
+    Scenario::new("oneshot_protection_caps", 42, 60)
+        .describe("A target with high oneshot protection caps cleave's per-hit damage (accuracy/(1+osp/scale) = 50): the Damage line reads prevented=50.000 and dmg=50.000, down from the un-capped 100.000.")
+        .cast_asset("cleave")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("cleave")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .with_stat(StatType::AddedOneshotProtection, 19000.0)
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "cleave".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+// Barrier (`barrier_absorbs`) and elude (`elude_reduces`) are DEFERRED, not faked. Both soak via the
+// runtime CURRENT pools (`StatBlock::current_barrier` / `current_elude_stacks`), which obelisk's
+// stat-rebuild path leaves at 0 even when `.with_stat` raises the MAX (`rebuild()` does
+// `current_barrier = current_barrier.min(max_barrier)` and explicitly preserves `current_elude_stacks`
+// — see `stat_block/mod.rs`). Reaching them requires the `grant_barrier` / `grant_elude` verbs, which
+// would need a new additive `ActorSpec` field wired through `spawn_actor`. With four `.with_stat`-only
+// layers already delivered here (armour, physical-DR, generic-DR, oneshot — exceeding the >=3 target),
+// those two are left as a clean follow-up rather than expanding the scenario harness in this batch.
+//
+// Spell-dodge (`was_dodged`) is also DROPPED: a dodged hit returns early in obelisk's resolution with
+// no damage and no mitigation-channel write, and the dodge flag (`CombatResult.was_dodged`) is NOT
+// threaded into `DamageResolved` today — surfacing it is a production change explicitly out of scope
+// for this batch, so it is documented here rather than faked.
+
 /// Interrupt mid-windup (Batch 8, the H3 `Action::Interrupt` payoff): the player casts firebolt at a
 /// dummy at tick 1, then an `Action::Interrupt { id: "player" }` fires at tick 5 — mid-windup, BEFORE
 /// the bolt's hit window opens (firebolt windup runs to ~tick 19; see `already_casting`/`firebolt_kill`).
@@ -1026,6 +1175,10 @@ pub fn feature_matrix() -> Vec<Scenario> {
         self_buff_boosts_damage(),
         crit_strike(),
         resistance_mitigates(),
+        armour_mitigates(),
+        physical_damage_reduction_mitigates(),
+        damage_reduction_mitigates(),
+        oneshot_protection_caps(),
         cast_speed_scaling(),
         interrupt_cast(),
         cast_rejected_insufficient_mana(),

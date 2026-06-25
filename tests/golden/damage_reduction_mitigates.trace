@@ -1,0 +1,7 @@
+   2	CastBegan	caster=player skill=cleave dur=0.300
+   7	CastPhase	caster=player skill=cleave Windup->Active
+   7	HitWindow	caster=player skill=cleave window=arc
+   7	HitConfirmed	caster=player target=dummy skill=cleave
+   7	Damage	caster=player target=dummy skill=cleave dmg=70.000 kill=false life_after=130.000 crit=false prevented=30.000 life_gained=0.000 mana_gained=0.000
+  13	CastPhase	caster=player skill=cleave Active->Recovery
+  19	CastPhase	caster=player skill=cleave Recovery->Done

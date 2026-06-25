@@ -58,7 +58,7 @@ UPDATE_GOLDEN=1 cargo test --features test-support --test golden   # regenerate 
 integration path (`ObeliskSimPlugin` + the prelude verbs + the documented headless recipe) and
 records every gameplay event into a stable-id, `{:.3}`-precision `Trace` (`src/scenario/trace.rs`),
 diffed against `tests/golden/<name>.trace`. `feature_matrix()` is the canonical, always-current list
-(**32 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
+(**36 scenarios** as of this writing) spanning: combat core (`firebolt_kill`, `cone_cleave`,
 `faction_filter`, `apply_effect`); cast rejection + interrupt (`out_of_range`, `line_of_sight`,
 `already_casting`, `cooldown_gate`, `cast_rejected_insufficient_mana`, `cast_rejected_unknown_skill`,
 `cast_rejected_no_target`, `interrupt_cast`); effect triggers from every condition (`trigger_cascade`
@@ -72,7 +72,18 @@ trigger path, parallel to the effect-condition `TriggeredEffect` cascade); effec
 `rage`, and `StrongestOnly` is dropped — it has no distinct observable trace through the public apply
 path, see the `feature_matrix()` doc comment); stat-driven effects via `ActorSpec::with_stat` /
 `with_self_effect` + the `DamageResolved` breakdown fields (`self_buff_boosts_damage`, `crit_strike`,
-`resistance_mitigates`, `cast_speed_scaling`); loot/netcode (`loot_on_death` = one guaranteed
+`resistance_mitigates`, `cast_speed_scaling`); secondary-defense / mitigation layers, each a
+DISTINCT obelisk code path proven via a `prevented>0` + reduced-`dmg` Damage line, all reached with
+`ActorSpec::with_stat` on a `cleave` (100 physical) target (`armour_mitigates` = `AddedArmour` 500 →
+`damage_reduced_by_armour` 50 via the PoE armour formula; `physical_damage_reduction_mitigates` =
+`PhysicalDamageReduction` 40 → `damage_reduced_by_physical_dr` 40; `damage_reduction_mitigates` =
+`ReducedDamageTaken` 3000 → the GLOBAL `damage_reduced_by_dr` 30 — note the StatType→field path
+double-divides by 100, so the value is `pct * 100`, faithful to obelisk; `oneshot_protection_caps` =
+`AddedOneshotProtection` 19000 → `damage_prevented_by_oneshot` 50 via the accuracy-vs-protection cap);
+`barrier_absorbs`/`elude_reduces` are DEFERRED (soak via the runtime `current_barrier`/
+`current_elude_stacks` pools that `.with_stat` leaves at 0 — they need the `grant_barrier`/
+`grant_elude` verbs + an additive `ActorSpec` field) and spell-dodge is DROPPED (`was_dodged` isn't
+threaded into `DamageResolved` — a production change out of scope); loot/netcode (`loot_on_death` = one guaranteed
 currency, plus four drop-table feature goldens reached via `ActorSpec::with_level/with_rarity_mult/
 with_quantity_mult` + `Scenario::with_drop_table_fixture`: `loot_multi_drop` = a `count = 2` roll
 option over an item+currency pool listing 2+ drops; `loot_quantity_scaling` = `quantity_mult = 3`
