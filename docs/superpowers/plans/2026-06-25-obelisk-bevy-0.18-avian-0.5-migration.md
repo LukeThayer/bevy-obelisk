@@ -134,10 +134,17 @@ Expected: commit succeeds. If only `Cargo.toml`/`Cargo.lock` changed (no source 
 
 ---
 
-### Task 3: The one real Avian edit — `ColliderAabb::size()` → `half_size()`
+### Task 3: ~~The one real Avian edit — `ColliderAabb::size()` → `half_size()`~~ → VERIFIED NO-OP
+
+> **✅ RESOLVED (2026-06-25): no edit needed.** Checked against the resolved avian3d **0.5.0**:
+> `ColliderAabb::size()` still exists and is unchanged (full extent, same as 0.4); `half_size()` does
+> not exist. `cargo build --features debug-gizmos` compiles **green as-is** with `size() * 0.5`, which
+> is the correct radius math. avian 0.5 is a pure-compat release for this crate — `present/debug_viz.rs`
+> needs zero Avian changes. The steps below are retained for the record but were **not executed** (the
+> first step's "expected compile error" does not occur). No commit. Proceed to Task 4.
 
 **Files:**
-- Modify: `src/present/debug_viz.rs:276-277` (inside `draw_combat_gizmos`, `debug-gizmos`-gated)
+- ~~Modify: `src/present/debug_viz.rs:276-277`~~ — no change (verified no-op above)
 
 **Why its own task:** this is the single change that can pass `cargo build` and `cargo test` while being *visually wrong*. In Avian 0.4 `ColliderAabb::size()` returns the **full** extent (the code multiplies by `0.5` to get a radius); in 0.5 `size()` is gone and `half_size()` returns the **half**-extent already. A mechanical rename that keeps the `* 0.5` halves the gizmo radius silently. The multiplier must be removed.
 

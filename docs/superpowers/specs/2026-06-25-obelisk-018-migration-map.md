@@ -6,6 +6,23 @@
 **Verified against:** sibling 0.18 codebases `/Users/luke/src/wisp` (`bevy = "0.18"`,
 `avian3d = "0.5"`) and `/Users/luke/src/bevy_modal_editor` (`bevy = "0.18"`).
 
+> **⚠️ EXECUTION CORRECTION (2026-06-25, during the migration):** Two claims in this map were
+> **falsified** when checked against the actually-resolved dependency versions (bevy **0.18.1**,
+> avian3d **0.5.0**):
+> 1. **Area 5b is VOID.** `ColliderAabb::size()` is **NOT removed** in avian 0.5.0 — it still exists
+>    and still returns the full extent (`self.max - self.min`), identical to 0.4. `half_size()` does
+>    **not exist** on `ColliderAabb` in 0.5.0. So the prescribed `size()`→`half_size()` edit (and the
+>    `* 0.5` removal) is **wrong** — applying it would *introduce* a compile error. `present/debug_viz.rs`
+>    needs **zero** Avian edits; avian 0.5 is a pure-compatibility release for this crate. **Risk #2
+>    (the multiplier trap) is therefore moot** — there is no edit. The gizmo radius math
+>    (`size().max_element() * 0.5`) is already correct.
+> 2. **Area 0/2 missed one real Bevy edit:** Bevy 0.18 made `TypePath` a supertrait of `AssetLoader`,
+>    so `src/assets/mod.rs`'s `CastTimelineLoader` needed `#[derive(Default, TypePath)]` (a marker
+>    derive, no behavior change). This was the **only** source edit required to compile the sim.
+>
+> Net: the migration's real source-edit surface so far is the dep bump + the one `TypePath` derive.
+> The verified-against-source truth below overrides any contradicting prose in Areas 5b, 7 (T6), 8 (#2).
+
 ## How to read this map
 
 This is a migration where **the crate will not fully compile until most of the work is done** —
