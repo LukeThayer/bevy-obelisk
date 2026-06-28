@@ -181,6 +181,7 @@ pub fn validate_casts(
             recovery,
             fired_windows: Vec::new(),
             charge: req.charge,
+            muzzle_offset: req.muzzle_offset,
         });
         commands.trigger(CastBegan {
             caster,
@@ -261,7 +262,8 @@ pub fn advance_casts(
                         done: false,
                         charge: cast.charge,
                     },
-                    Transform::from_translation(caster_tf.translation).with_rotation(rot),
+                    Transform::from_translation(caster_tf.translation + cast.muzzle_offset)
+                        .with_rotation(rot),
                 ));
                 if let VolumeMotion::Linear { speed } = win.motion {
                     // Charge scales projectile world speed (no-op 1.0x when uncharged).

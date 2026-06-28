@@ -28,6 +28,10 @@ pub struct ActiveCast {
     /// Optional per-cast charge, snapshotted from the `PendingCast`. `None` = uncharged (1.0x).
     /// Scales projectile speed at spawn and damage at resolve via `charge_mult`.
     pub charge: Option<u8>,
+    /// Per-cast muzzle offset (world units), snapshotted from the `PendingCast`. Added to the
+    /// caster origin at projectile / hitbox spawn. `Vec3::ZERO` (the default) = spawn at the
+    /// caster origin, byte-identical to the pre-offset behaviour.
+    pub muzzle_offset: Vec3,
 }
 
 impl ActiveCast {

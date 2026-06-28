@@ -317,3 +317,81 @@ fn slice_is_deterministic_across_two_runs() {
     };
     assert_eq!(run(), run(), "same seed -> identical total damage");
 }
+
+/// Cast firebolt along +Z with the given muzzle offset and return the spawned hitbox/projectile's
+/// world-Y at spawn. The projectile heads straight along +Z (velocity Y = 0), so its Y stays
+/// constant for the lifetime of the window — any tick after spawn reads the spawn height.
+fn firebolt_spawn_y(muzzle_offset: Vec3) -> f32 {
+    let mut t = ObeliskTestApp::new(7);
+    let handle: Handle<CastTimeline> = t
+        .app
+        .world()
+        .resource::<AssetServer>()
+        .load("assets/skills/firebolt.cast.ron");
+    for _ in 0..2000 {
+        t.app.update();
+        if t.app
+            .world()
+            .resource::<Assets<CastTimeline>>()
+            .get(&handle)
+            .is_some()
+        {
+            break;
+        }
+    }
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("firebolt".into(), handle);
+
+    let player = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("player", 100.0, 100.0)),
+            Faction::Player,
+            ObeliskId("player".into()),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ))
+        .id();
+    t.app.update();
+
+    // Free-aim down +Z with the muzzle offset under test (charge 0 = no projectile-speed change).
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir_charged_from("firebolt", Dir3::Z, 0, muzzle_offset);
+
+    // Advance until the projectile window opens (firebolt windup ~0.3 s), then read the hitbox Y.
+    for _ in 0..120 {
+        t.advance_ticks(1);
+        let mut q = t
+            .app
+            .world_mut()
+            .query_filtered::<&Transform, With<Hitbox>>();
+        if let Some(tf) = q.iter(t.app.world()).next() {
+            return tf.translation.y;
+        }
+    }
+    panic!("firebolt hitbox never spawned");
+}
+
+#[test]
+fn muzzle_offset_raises_the_projectile_spawn() {
+    // Default (zero offset): spawns AT the caster origin (Y = 0) — the golden-safe behaviour.
+    let default_y = firebolt_spawn_y(Vec3::ZERO);
+    assert!(
+        default_y.abs() < 1e-4,
+        "zero muzzle offset must spawn at the caster origin (Y≈0), got {default_y}"
+    );
+    // A 1.6-unit vertical muzzle offset (e.g. firing from a first-person eye) raises the spawn by
+    // exactly 1.6, so the bolt travels along the crosshair ray instead of from the feet.
+    let raised_y = firebolt_spawn_y(Vec3::Y * 1.6);
+    assert!(
+        (raised_y - 1.6).abs() < 1e-4,
+        "a Y*1.6 muzzle offset must spawn 1.6 higher than default, got {raised_y}"
+    );
+}

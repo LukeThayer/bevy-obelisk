@@ -28,6 +28,11 @@ pub struct PendingCast {
     /// Optional per-cast charge. `None` = uncharged (1.0x, the default). Scales BOTH the
     /// projectile speed and the damage dealt via [`charge_mult`].
     pub charge: Option<u8>,
+    /// Optional per-cast muzzle offset (world units, added to the caster origin at projectile /
+    /// hitbox spawn). `Vec3::ZERO` = the default (spawn AT the caster origin — byte-identical to
+    /// the pre-offset behaviour, so the goldens are unperturbed). A consumer fires from a raised
+    /// muzzle (e.g. a first-person eye) by passing `Vec3::Y * eye_height`.
+    pub muzzle_offset: Vec3,
 }
 
 /// EntityCommands verbs to request a cast.
@@ -56,6 +61,17 @@ pub trait CastSkillExt {
         dir: Dir3,
         charge: u8,
     ) -> &mut Self;
+    /// As [`cast_skill_dir_charged`](CastSkillExt::cast_skill_dir_charged) but also offsetting the
+    /// projectile / hitbox spawn by `muzzle_offset` (world units, added to the caster origin). Pass
+    /// `Vec3::ZERO` for the default origin spawn; a first-person consumer fires from the camera eye
+    /// with `Vec3::Y * eye_height` so the bolt travels along the crosshair ray.
+    fn cast_skill_dir_charged_from(
+        &mut self,
+        skill_id: impl Into<String>,
+        dir: Dir3,
+        charge: u8,
+        muzzle_offset: Vec3,
+    ) -> &mut Self;
     /// Interrupt this entity's in-flight cast: cancels any `ActiveCast` and any still-pending
     /// `PendingCast` (so no further hit windows open / damage resolves for that cast). No-op if
     /// the entity is not casting. Mirrors the internal cancel done by `advance_casts` on
@@ -69,6 +85,7 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Entity(target),
             charge: None,
+            muzzle_offset: Vec3::ZERO,
         });
         self
     }
@@ -77,6 +94,7 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Point(point),
             charge: None,
+            muzzle_offset: Vec3::ZERO,
         });
         self
     }
@@ -85,6 +103,7 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Direction(dir),
             charge: None,
+            muzzle_offset: Vec3::ZERO,
         });
         self
     }
@@ -98,6 +117,7 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Entity(target),
             charge: Some(charge),
+            muzzle_offset: Vec3::ZERO,
         });
         self
     }
@@ -111,6 +131,7 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Point(point),
             charge: Some(charge),
+            muzzle_offset: Vec3::ZERO,
         });
         self
     }
@@ -124,6 +145,22 @@ impl CastSkillExt for EntityCommands<'_> {
             skill_id: skill_id.into(),
             aim: CastAim::Direction(dir),
             charge: Some(charge),
+            muzzle_offset: Vec3::ZERO,
+        });
+        self
+    }
+    fn cast_skill_dir_charged_from(
+        &mut self,
+        skill_id: impl Into<String>,
+        dir: Dir3,
+        charge: u8,
+        muzzle_offset: Vec3,
+    ) -> &mut Self {
+        self.insert(PendingCast {
+            skill_id: skill_id.into(),
+            aim: CastAim::Direction(dir),
+            charge: Some(charge),
+            muzzle_offset,
         });
         self
     }
