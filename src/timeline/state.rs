@@ -25,6 +25,9 @@ pub struct ActiveCast {
     pub recovery: f32,
     /// Window ids already spawned this cast (so we open each once).
     pub fired_windows: Vec<String>,
+    /// Optional per-cast charge, snapshotted from the `PendingCast`. `None` = uncharged (1.0x).
+    /// Scales projectile speed at spawn and damage at resolve via `charge_mult`.
+    pub charge: Option<u8>,
 }
 
 impl ActiveCast {

@@ -7,7 +7,7 @@ use crate::events::{
 };
 use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
-use crate::timeline::cast::{CastAim, PendingCast};
+use crate::timeline::cast::{charge_mult, CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
@@ -180,6 +180,7 @@ pub fn validate_casts(
             active,
             recovery,
             fired_windows: Vec::new(),
+            charge: req.charge,
         });
         commands.trigger(CastBegan {
             caster,
@@ -258,10 +259,13 @@ pub fn advance_casts(
                         remaining: win.active_duration,
                         hit_log: std::collections::HashMap::new(),
                         done: false,
+                        charge: cast.charge,
                     },
                     Transform::from_translation(caster_tf.translation).with_rotation(rot),
                 ));
                 if let VolumeMotion::Linear { speed } = win.motion {
+                    // Charge scales projectile world speed (no-op 1.0x when uncharged).
+                    let speed = speed * charge_mult(cast.charge);
                     ent.insert(Projectile {
                         velocity: dir * speed,
                     });

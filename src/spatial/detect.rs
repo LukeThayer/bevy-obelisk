@@ -65,6 +65,7 @@ pub fn detect_overlaps(
                 target,
                 skill_id: hitbox.skill_id.clone(),
                 window_id: hitbox.window_id.clone(),
+                charge: hitbox.charge,
             });
             let _ = owner_e;
         }

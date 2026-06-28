@@ -75,6 +75,9 @@ pub fn combat_result_mana_gained(r: &stat_core::combat::CombatResult) -> f64 {
 }
 
 /// The ONE true deterministic resolve path. Never calls `receive_damage`/`resolve_damage`.
+///
+/// Uncharged (`charge: None`) — identical to the pre-charge code path; see
+/// [`resolve_one_hit_charged`].
 pub fn resolve_one_hit(
     caster: &mut StatBlock,
     target: &mut StatBlock,
@@ -82,11 +85,43 @@ pub fn resolve_one_hit(
     registry: &HashMap<String, Skill>,
     rng: &mut ChaCha8Rng,
 ) -> Result<HitOutcome, SkillUseError> {
+    resolve_one_hit_charged(caster, target, skill, registry, rng, None)
+}
+
+/// As [`resolve_one_hit`], with an optional per-cast `charge` that scales the damage dealt by
+/// [`charge_mult`](crate::timeline::cast::charge_mult).
+///
+/// Golden-safety: when `charge` is `None` this takes EXACTLY the original code path — the resolved
+/// packets are never touched, so the byte-for-byte output is unchanged. When `charge` is `Some`, the
+/// packet `FinalDamage` magnitudes are scaled AFTER `use_skill_against` produces them (so the crit
+/// roll already happened) and BEFORE `resolve_damage_with_triggers` consumes them (so resistances /
+/// mitigation apply on the scaled "stronger bolt"). The scale is a plain float multiply that draws
+/// NO RNG, preserving determinism.
+pub fn resolve_one_hit_charged(
+    caster: &mut StatBlock,
+    target: &mut StatBlock,
+    skill: &Skill,
+    registry: &HashMap<String, Skill>,
+    rng: &mut ChaCha8Rng,
+    charge: Option<u8>,
+) -> Result<HitOutcome, SkillUseError> {
     let source_id = caster.id.clone();
     // use_skill_against needs &mut caster + &target simultaneously: snapshot the target.
     let target_snapshot = target.clone();
-    let skill_result =
+    let mut skill_result =
         caster.use_skill_against(Some(&target_snapshot), skill, registry, source_id, rng)?;
+
+    // Charge multiplier: a no-op for the default `None` path (packets untouched). Only when a charge
+    // is present do we scale the produced packets' damage magnitudes — a stronger bolt — before the
+    // resolve consumes them. No RNG is drawn here.
+    if charge.is_some() {
+        let mult = crate::timeline::cast::charge_mult(charge) as f64;
+        for packet in &mut skill_result.packets {
+            for d in &mut packet.damages {
+                d.amount *= mult;
+            }
+        }
+    }
 
     // Resolve the produced packets against the live target (deterministic, seeded).
     let tr =
@@ -210,6 +245,39 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
         );
         assert_eq!(caster.current_mana, 95.0, "5 mana spent");
         assert_eq!(outcome.mana_spent, 5.0);
+    }
+
+    /// A per-cast charge scales the damage dealt by `charge_mult`: `Some(255)` => 2.0x (40 from a
+    /// base-20 firebolt), while `None` is the exact uncharged base (20). The multiply draws no RNG.
+    #[test]
+    fn charge_scales_firebolt_damage() {
+        stat_core::config::ensure_constants_initialized();
+        let registry = firebolt_registry();
+        let skill = registry.get("firebolt").unwrap();
+
+        let resolve = |charge: Option<u8>| {
+            let mut caster = StatBlock::with_id("player");
+            caster.max_mana.base = 100.0;
+            caster.current_mana = 100.0;
+            let mut target = StatBlock::with_id("dummy");
+            target.max_life.base = 500.0;
+            target.current_life = 500.0;
+            let mut rng = ChaCha8Rng::seed_from_u64(1);
+            resolve_one_hit_charged(&mut caster, &mut target, skill, &registry, &mut rng, charge)
+                .unwrap()
+                .total_damage
+        };
+
+        assert!(
+            (resolve(None) - 20.0).abs() < 1e-6,
+            "uncharged firebolt deals base 20, got {}",
+            resolve(None)
+        );
+        assert!(
+            (resolve(Some(255)) - 40.0).abs() < 1e-6,
+            "fully charged firebolt deals 2.0x = 40, got {}",
+            resolve(Some(255))
+        );
     }
 
     #[test]

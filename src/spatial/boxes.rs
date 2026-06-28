@@ -31,6 +31,9 @@ pub struct Hitbox {
     pub hit_log: HashMap<Entity, f32>,
     /// FirstOnly: set true after the single hit so the box stops hitting.
     pub done: bool,
+    /// Optional per-cast charge carried from the `ActiveCast`, forwarded to `HitConfirmed` so the
+    /// resolve can scale damage. `None` = uncharged (1.0x).
+    pub charge: Option<u8>,
 }
 
 impl Hitbox {
@@ -88,6 +91,7 @@ mod tests {
             remaining: 5.0,
             hit_log: HashMap::new(),
             done: false,
+            charge: None,
         }
     }
 

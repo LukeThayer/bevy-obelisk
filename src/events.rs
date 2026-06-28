@@ -63,6 +63,9 @@ pub struct HitConfirmed {
     pub target: Entity,
     pub skill_id: String,
     pub window_id: String,
+    /// Optional per-cast charge forwarded from the originating `Hitbox`, used by the resolve to
+    /// scale damage. `None` = uncharged (1.0x).
+    pub charge: Option<u8>,
 }
 
 #[derive(Event, Clone, Debug)]

@@ -1,5 +1,6 @@
 use crate::combat::resolve::{
-    combat_result_life_gained, combat_result_mana_gained, combat_result_prevented, resolve_one_hit,
+    combat_result_life_gained, combat_result_mana_gained, combat_result_prevented,
+    resolve_one_hit_charged,
 };
 use crate::core::components::Attributes;
 use crate::core::config::{CombatRng, SkillRegistry};
@@ -31,12 +32,13 @@ pub fn on_hit_confirmed(
         Err(_) => return, // same entity or missing
     };
 
-    let outcome = match resolve_one_hit(
+    let outcome = match resolve_one_hit_charged(
         &mut caster_attrs.0,
         &mut target_attrs.0,
         skill,
         &registry.0,
         &mut rng.0,
+        ev.charge,
     ) {
         Ok(o) => o,
         Err(_) => return,
@@ -258,6 +260,7 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
             target,
             skill_id: "discharge_strike".to_string(),
             window_id: "w".to_string(),
+            charge: None,
         });
         // Flush queued commands so the observer's `commands.trigger(...)` events (TriggerFired /
         // DamageResolved) actually dispatch and the target's mutated Attributes are applied.

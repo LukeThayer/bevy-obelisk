@@ -1,6 +1,6 @@
 pub mod resolve;
 pub mod system;
-pub use resolve::{resolve_one_hit, HitOutcome};
+pub use resolve::{resolve_one_hit, resolve_one_hit_charged, HitOutcome};
 
 use bevy::prelude::*;
 pub struct ObeliskCombatPlugin;
