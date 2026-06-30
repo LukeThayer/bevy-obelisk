@@ -1,8 +1,8 @@
 use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Asset, TypePath, Debug, Clone, Deserialize)]
+#[derive(Asset, Reflect, Debug, Clone, Serialize, Deserialize)]
 pub struct CastTimeline {
     pub skill_id: String,
     pub phase_durations: PhaseDurations,
@@ -14,14 +14,14 @@ pub struct CastTimeline {
     pub vfx_cues: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
 pub struct PhaseDurations {
     pub windup: f32,
     pub active: f32,
     pub recovery: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
 pub struct CollisionWindow {
     pub id: String,
     pub spawn_phase: WindowPhase,
@@ -37,21 +37,21 @@ pub struct CollisionWindow {
     pub rehit_interval: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WindowPhase {
     Windup,
     Active,
     Recovery,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize)]
 pub enum CollisionShape {
     Sphere { radius: f32 },
     Capsule { radius: f32, height: f32 },
     Cone { angle: f32, range: f32 },
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize, Default)]
 pub enum VolumeMotion {
     #[default]
     Static,
@@ -60,7 +60,7 @@ pub enum VolumeMotion {
     },
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HitFilter {
     Caster,
     Allies,
@@ -68,14 +68,14 @@ pub enum HitFilter {
     All,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HitMode {
     OncePerTarget,
     FirstOnly,
     EveryTick,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
 pub enum CastTargeting {
     SelfCast,
     SingleEntity { range: f32 },
@@ -83,7 +83,7 @@ pub enum CastTargeting {
     Cone { angle: f32, range: f32 },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
 pub enum CastDelivery {
     Melee,
     Instant,
@@ -136,6 +136,16 @@ impl Plugin for ObeliskAssetsPlugin {
         app.init_asset::<CastTimeline>()
             .register_asset_loader(CastTimelineLoader)
             .init_resource::<CastTimelineHandles>();
+        app.register_type::<CastTimeline>()
+            .register_type::<PhaseDurations>()
+            .register_type::<CollisionWindow>()
+            .register_type::<WindowPhase>()
+            .register_type::<CollisionShape>()
+            .register_type::<VolumeMotion>()
+            .register_type::<HitFilter>()
+            .register_type::<HitMode>()
+            .register_type::<CastTargeting>()
+            .register_type::<CastDelivery>();
     }
 }
 
@@ -176,5 +186,67 @@ mod tests {
             .expect("loaded");
         assert_eq!(timeline.skill_id, "firebolt");
         assert_eq!(timeline.collision_windows.len(), 1);
+    }
+
+    #[test]
+    fn cast_timeline_round_trips_through_ron() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/skills/firebolt.cast.ron"
+        ))
+        .expect("read firebolt.cast.ron");
+        let parsed: CastTimeline = ron::de::from_str(&src).expect("parse original");
+        let serialized = ron::ser::to_string(&parsed).expect("serialize");
+        let reparsed: CastTimeline = ron::de::from_str(&serialized).expect("re-parse");
+        assert_eq!(parsed.skill_id, reparsed.skill_id);
+        assert_eq!(
+            parsed.phase_durations.windup,
+            reparsed.phase_durations.windup
+        );
+        assert_eq!(
+            parsed.phase_durations.active,
+            reparsed.phase_durations.active
+        );
+        assert_eq!(
+            parsed.phase_durations.recovery,
+            reparsed.phase_durations.recovery
+        );
+        assert_eq!(
+            parsed.collision_windows.len(),
+            reparsed.collision_windows.len()
+        );
+        assert_eq!(
+            format!("{:?}", parsed.collision_windows[0].shape),
+            format!("{:?}", reparsed.collision_windows[0].shape)
+        );
+        assert_eq!(
+            format!("{:?}", parsed.targeting),
+            format!("{:?}", reparsed.targeting)
+        );
+        assert_eq!(
+            format!("{:?}", parsed.delivery),
+            format!("{:?}", reparsed.delivery)
+        );
+        assert_eq!(parsed.vfx_cues, reparsed.vfx_cues);
+    }
+
+    #[test]
+    fn cast_timeline_type_is_registered_for_reflection() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(AssetPlugin {
+                file_path: ".".into(),
+                ..default()
+            })
+            .add_plugins(ObeliskAssetsPlugin);
+        app.finish();
+        app.cleanup();
+        let registry = app.world().resource::<AppTypeRegistry>().read();
+        assert!(
+            registry
+                .get(std::any::TypeId::of::<CastTimeline>())
+                .is_some(),
+            "CastTimeline must be registered"
+        );
     }
 }
