@@ -15,6 +15,11 @@ pub fn detect_overlaps(
     spatial: SpatialQuery,
 ) {
     for (mut hitbox, hb_tf) in &mut hitboxes {
+        // Beams have no overlap semantics — `resolve_beam_hits` strikes their designated
+        // target directly.
+        if hitbox.is_beam {
+            continue;
+        }
         let collider = crate::spatial::shapes::to_collider(&hitbox.shape);
         let hits = spatial.shape_intersections(
             &collider,
@@ -22,7 +27,6 @@ pub fn detect_overlaps(
             hb_tf.rotation,
             &SpatialQueryFilter::default(),
         );
-
         let caster_faction = factions
             .get(hitbox.caster)
             .copied()
@@ -69,6 +73,57 @@ pub fn detect_overlaps(
             });
             let _ = owner_e;
         }
+    }
+}
+
+/// Strike each beam hitbox's DESIGNATED target: no overlap test — acquisition already picked
+/// the victim (the cast's entity aim, or a retarget hop). Moves the hitbox onto the victim so
+/// its `HitEntity` end (and the chained retarget search) happens AT the victim, applies the
+/// faction filter, registers the hit (`FirstOnly` → done → `end_hitboxes` ends it next tick),
+/// and emits the same `HitConfirmed` the overlap path does. A beam whose target is gone (died
+/// mid-chain) or was never designated (direction-aimed cast: the paid fizzle) strikes nothing
+/// and fuses out.
+pub fn resolve_beam_hits(
+    mut commands: Commands,
+    mut hitboxes: Query<(&mut Hitbox, &mut Transform)>,
+    victims: Query<&Transform, Without<Hitbox>>,
+    factions: Query<&Faction>,
+) {
+    for (mut hitbox, mut hb_tf) in &mut hitboxes {
+        if !hitbox.is_beam || hitbox.done {
+            continue;
+        }
+        let Some(target) = hitbox.beam_target else {
+            continue;
+        };
+        if !hitbox.can_hit(target) {
+            continue;
+        }
+        let Ok(victim_tf) = victims.get(target) else {
+            continue;
+        };
+        let caster_faction = factions
+            .get(hitbox.caster)
+            .copied()
+            .unwrap_or(Faction::Neutral);
+        let target_faction = factions.get(target).copied().unwrap_or(Faction::Neutral);
+        if !crate::spatial::filter::passes_filter(
+            hitbox.filter,
+            caster_faction,
+            target_faction,
+            target == hitbox.caster,
+        ) {
+            continue;
+        }
+        hb_tf.translation = victim_tf.translation;
+        hitbox.register_hit(target);
+        commands.trigger(HitConfirmed {
+            caster: hitbox.caster,
+            target,
+            skill_id: hitbox.skill_id.clone(),
+            window_id: hitbox.window_id.clone(),
+            charge: hitbox.charge,
+        });
     }
 }
 

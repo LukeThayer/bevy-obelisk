@@ -152,9 +152,9 @@ point-anchored zone spawn, OnTick emitter edge, deterministic jitter from `Comba
 | Ballistic motion + gravity, ballistic aim solver, ground plane hook | ✅ landed 2026-07-02 (unpushed) |
 | Rules triggers (skill/effect), chain/pierce *fields*, effects/DoT | ✅ shipped (`stat_core`) |
 | `OnEnd` events + chain-at-position + end cues + cosmetic termination | ✅ shipped 2026-07-02 (6afa6ba; firebolt v2 is the proving case) |
-| Authored acquisition (+fallback/fizzle) | ❌ increment 2 candidate |
-| Beam node + two-anchor cues | ❌ increment 2 candidate (chain lightning) |
-| `Retarget` edge (visited set, hops) — geometry for `can_chain` | ❌ increment 2 candidate |
+| Authored acquisition (+fallback/fizzle) | ⚠️ partial 2026-07-02: server hitscan keyed on `SingleEntity` targeting, miss = paid fizzle; richer authored acquisition (ground point, fallbacks) still open |
+| Beam node + two-anchor cues | ✅ shipped 2026-07-02 (increment 2: `VolumeMotion::Beam`, `position_from`) |
+| `Retarget` edge (visited set, hops) — geometry for `can_chain` | ✅ shipped 2026-07-02 (increment 2: `EndReaction::Retarget`) |
 | `OnTick` emitter edge + point-anchored zones + RNG jitter | ❌ increment 3 candidate (blizzard) |
 | Trigger↔graph unification (triggered skill runs its graph at payload) | 🔮 future |
 

@@ -68,6 +68,7 @@ fn cue_on_cast(
             cue_id,
             source: e.caster,
             position,
+            position_from: None,
             kind: CueKind::OnCast,
         });
     }
@@ -78,19 +79,34 @@ fn cue_on_window(
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
     transforms: Query<&Transform>,
+    hitboxes: Query<&crate::spatial::boxes::Hitbox>,
     mut commands: Commands,
 ) {
     let e = ev.event();
     let slot = format!("on_window_{}", e.window_id);
     if let Some(cue_id) = cue_for(&handles, &timelines, &e.skill_id, &slot) {
-        let position = transforms
+        let origin = transforms
             .get(e.hitbox)
             .map(|t| t.translation)
             .unwrap_or(Vec3::ZERO);
+        // A beam window's open cue is TWO-POINT: from the beam origin to its designated
+        // victim, so a lightning-arc lane can render between them.
+        let beam_to = hitboxes
+            .get(e.hitbox)
+            .ok()
+            .filter(|hb| hb.is_beam)
+            .and_then(|hb| hb.beam_target)
+            .and_then(|t| transforms.get(t).ok())
+            .map(|t| t.translation);
+        let (position, position_from) = match beam_to {
+            Some(to) => (to, Some(origin)),
+            None => (origin, None),
+        };
         commands.trigger(CueEvent {
             cue_id,
             source: e.caster,
             position,
+            position_from,
             kind: CueKind::OnWindow,
         });
     }
@@ -112,6 +128,7 @@ fn cue_on_end(
             cue_id,
             source: e.caster,
             position: e.position,
+            position_from: None,
             kind: CueKind::OnEnd,
         });
     }
@@ -134,6 +151,7 @@ fn cue_on_hit(
             cue_id,
             source: e.target,
             position,
+            position_from: None,
             kind: CueKind::OnHit,
         });
     }

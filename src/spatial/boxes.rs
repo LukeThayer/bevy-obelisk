@@ -34,6 +34,20 @@ pub struct Hitbox {
     /// Optional per-cast charge carried from the `ActiveCast`, forwarded to `HitConfirmed` so the
     /// resolve can scale damage. `None` = uncharged (1.0x).
     pub charge: Option<u8>,
+    /// `VolumeMotion::Beam`: this hitbox strikes its designated target directly (no overlap
+    /// test — `detect_overlaps` skips it; `resolve_beam_hits` handles it).
+    pub is_beam: bool,
+    /// The beam's designated victim: the cast's entity aim for a scheduled beam window, or the
+    /// entity a `Retarget` reaction found. `None` on a beam = nothing to strike (the paid
+    /// fizzle: the window just fuses out).
+    pub beam_target: Option<Entity>,
+    /// How many retarget hops preceded this hitbox (0 = the initial window). `Retarget`
+    /// reactions stop once `hop >= max_hops` — the bound that makes retarget cycles legal.
+    pub hop: u8,
+    /// Entities already struck by EARLIER hitboxes in this chain (this hitbox's own victims
+    /// are in `hit_log`). Retarget searches exclude `visited ∪ hit_log` so a chain never
+    /// revisits a victim.
+    pub visited: Vec<Entity>,
 }
 
 impl Hitbox {
@@ -92,6 +106,10 @@ mod tests {
             hit_log: HashMap::new(),
             done: false,
             charge: None,
+            is_beam: false,
+            beam_target: None,
+            hop: 0,
+            visited: Vec::new(),
         }
     }
 

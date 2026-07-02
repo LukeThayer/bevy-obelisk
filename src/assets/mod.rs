@@ -71,15 +71,30 @@ pub enum VolumeMotion {
         speed: f32,
         gravity: f32,
     },
+    /// Instantaneous link to the hitbox's DESIGNATED TARGET (the cast's entity aim, or the
+    /// entity a `Retarget` reaction found): no overlap test — the target IS the payload; the
+    /// hitbox strikes it on resolve and ends `HitEntity` at the victim. With no designated
+    /// target (e.g. a direction-aimed cast of a beam skill) it strikes nothing and fuses out —
+    /// the paid-fizzle miss. `shape` is unused for hitting (kept for the editor gizmo).
+    Beam,
 }
 
-/// What a window's ending causes. One variant today; forks / zones / effect-in-radius are
-/// additive later.
+/// What a window's ending causes. Forks / zones / effect-in-radius are additive later.
 #[derive(Debug, Clone, Reflect, Serialize, Deserialize, PartialEq)]
 pub enum EndReaction {
     /// Spawn the named window (which must have `spawn_phase: Chained`) AT THE END POSITION,
     /// inheriting the cast's aim, charge, and caster attribution.
     Chain(String),
+    /// Search a sphere of `radius` around the end position for the NEAREST entity passing the
+    /// spawned window's hit filter that this chain has not already struck, and spawn `window`
+    /// (must be `Chained`, normally `motion: Beam`) targeted onto it. Stops silently when no
+    /// candidate exists or the chain has already made `max_hops` hops. UNLIKE `Chain`, a
+    /// `Retarget` may name its own window (self-hop) — the hop counter bounds the cycle.
+    Retarget {
+        window: String,
+        radius: f32,
+        max_hops: u8,
+    },
 }
 
 /// Per-[`EndReason`](crate::events::EndReason) reactions authored on a collision window: what
@@ -180,27 +195,34 @@ pub enum CastLoadError {
     Invalid(String),
 }
 
-/// Referential + boundedness validation of a timeline's `on_end` chain graph:
-/// - every `Chain` target must name an existing window,
-/// - every `Chain` target must have `spawn_phase: Chained` (a scheduled window can't also be
-///   chained — it would double-spawn),
-/// - the chain graph must be ACYCLIC (a chained window re-triggering an ancestor would spawn
-///   hitboxes forever; bounded self-reference needs an explicit counter — a later increment).
+/// Referential + boundedness validation of a timeline's `on_end` reaction graph:
+/// - every `Chain`/`Retarget` target must name an existing window with `spawn_phase: Chained`
+///   (a scheduled window can't also be spawned by a reaction — it would double-spawn),
+/// - `Retarget` must have `max_hops >= 1` and `radius > 0` (a zero-hop/zero-radius retarget
+///   can never fire),
+/// - the CHAIN-edge graph must be ACYCLIC (an unbounded chain cycle would spawn hitboxes
+///   forever). `Retarget` edges may cycle — including self-hops — because the per-hitbox hop
+///   counter bounds them.
 pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
     let index: std::collections::HashMap<&str, &CollisionWindow> = tl
         .collision_windows
         .iter()
         .map(|w| (w.id.as_str(), w))
         .collect();
-    let targets = |w: &CollisionWindow| {
+    let reactions = |w: &CollisionWindow| {
         [&w.on_end.hit, &w.on_end.world, &w.on_end.fuse]
             .into_iter()
             .flatten()
-            .map(|EndReaction::Chain(id)| id.clone())
+            .cloned()
             .collect::<Vec<_>>()
     };
+    let target_of = |r: &EndReaction| match r {
+        EndReaction::Chain(id) => id.clone(),
+        EndReaction::Retarget { window, .. } => window.clone(),
+    };
     for w in &tl.collision_windows {
-        for t in targets(w) {
+        for r in reactions(w) {
+            let t = target_of(&r);
             let Some(target) = index.get(t.as_str()) else {
                 return Err(format!("window '{}' chains to unknown window '{t}'", w.id));
             };
@@ -210,9 +232,30 @@ pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
                     w.id
                 ));
             }
+            if let EndReaction::Retarget {
+                radius, max_hops, ..
+            } = r
+            {
+                if max_hops == 0 || radius <= 0.0 {
+                    return Err(format!(
+                        "window '{}' retargets with max_hops {max_hops} / radius {radius}: \
+                         both must be positive",
+                        w.id
+                    ));
+                }
+            }
         }
     }
-    // Cycle check: DFS from every window over chain edges.
+    // Cycle check over CHAIN edges only (retarget cycles are hop-bounded by construction).
+    let chain_targets = |w: &CollisionWindow| {
+        reactions(w)
+            .into_iter()
+            .filter_map(|r| match r {
+                EndReaction::Chain(id) => Some(id),
+                EndReaction::Retarget { .. } => None,
+            })
+            .collect::<Vec<_>>()
+    };
     for start in &tl.collision_windows {
         let mut stack = vec![start.id.clone()];
         let mut seen = std::collections::HashSet::new();
@@ -221,7 +264,7 @@ pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
                 continue;
             }
             let Some(w) = index.get(id.as_str()) else { continue };
-            for t in targets(w) {
+            for t in chain_targets(w) {
                 if t == start.id {
                     return Err(format!("chain cycle through window '{}'", start.id));
                 }

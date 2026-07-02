@@ -195,5 +195,8 @@ pub struct CueEvent {
     pub source: Entity,
     /// World position to spawn the effect at.
     pub position: Vec3,
+    /// Second anchor for TWO-POINT cues (a beam window's open cue: `position_from` = the beam's
+    /// origin, `position` = the victim). `None` for ordinary single-point cues.
+    pub position_from: Option<Vec3>,
     pub kind: CueKind,
 }

@@ -134,7 +134,11 @@ impl Plugin for ObeliskSimPlugin {
                 )
                     .in_set(ObeliskSet::Advance),
                 spatial::projectile::move_projectiles.in_set(ObeliskSet::Projectiles),
-                spatial::detect::detect_overlaps.in_set(ObeliskSet::ResolveHits),
+                (
+                    spatial::detect::detect_overlaps,
+                    spatial::detect::resolve_beam_hits,
+                )
+                    .in_set(ObeliskSet::ResolveHits),
             ),
         );
         // Host-fired world impacts feed the `end_hitboxes` funnel via a marker component.

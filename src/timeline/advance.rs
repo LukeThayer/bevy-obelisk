@@ -38,7 +38,7 @@ pub fn validate_casts(
     timelines: Res<Assets<CastTimeline>>,
     transforms: Query<&Transform>,
     spatial: SpatialQuery,
-    hurtboxes: Query<&Hurtbox>,
+    hurtboxes: Query<(Entity, &Hurtbox)>,
     mut cooldowns: ResMut<Cooldowns>,
 ) {
     for (caster, req) in &pending {
@@ -149,9 +149,22 @@ pub fn validate_casts(
                 let dist = to_target.length();
                 if dist > f32::EPSILON {
                     let dir = Dir3::new(to_target).unwrap_or(Dir3::Z);
-                    let filter = SpatialQueryFilter::default().with_excluded_entities([caster]);
+                    // Exclude the caster AND its own hurtbox entities: the hurtbox is a CHILD
+                    // sensor collider, so excluding only the caster body let the ray hit the
+                    // caster's own hurtbox first and self-block every entity-aimed cast.
+                    let own_hurtboxes = hurtboxes
+                        .iter()
+                        .filter(|(_, h)| h.owner == caster)
+                        .map(|(e, _)| e);
+                    let filter = SpatialQueryFilter::default()
+                        .with_excluded_entities(own_hurtboxes.chain([caster]));
                     if let Some(hit) = spatial.cast_ray(caster_pos, dir, dist, true, &filter) {
-                        let hit_is_target = hurtboxes.get(hit.entity).map(|h| h.owner) == Ok(e);
+                        // The target counts whether the ray meets its HURTBOX (owner == e) or
+                        // its BODY collider directly (hit.entity == e) — hosts with compound
+                        // bodies (arena: Dynamic capsule + child hurtbox sensor) can return
+                        // either collider first at the same surface.
+                        let hit_is_target = hit.entity == e
+                            || hurtboxes.get(hit.entity).map(|(_, h)| h.owner) == Ok(e);
                         if !hit_is_target {
                             commands.trigger(CastRejected {
                                 caster,
@@ -259,6 +272,12 @@ pub fn advance_casts(
                     caster_tf.translation + cast.muzzle_offset,
                     cast.aim_dir,
                     cast.charge,
+                    ChainPayload {
+                        // A scheduled beam strikes the cast's entity aim; None (e.g. a
+                        // direction-aimed cast of a beam skill) is the paid fizzle.
+                        beam_target: cast.target,
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -271,10 +290,20 @@ pub fn advance_casts(
     }
 }
 
+/// The chain payload a spawned window inherits: who to strike (beams), how many hops came
+/// before, and which entities the chain has already struck.
+#[derive(Default)]
+pub(crate) struct ChainPayload {
+    pub beam_target: Option<Entity>,
+    pub hop: u8,
+    pub visited: Vec<Entity>,
+}
+
 /// Spawn one collision window's `Hitbox` at `origin` facing `dir`, inserting its `Projectile`
 /// motion (charge-scaled speed; gravity NOT charge-scaled — a charged lob flies flatter), and
 /// fire `HitWindowOpened`. Shared by the phase schedule (`advance_casts`, origin = caster +
-/// muzzle) and end-reaction chaining (`end_hitboxes`, origin = the parent's END position).
+/// muzzle) and end reactions (`end_hitboxes`, origin = the parent's END position).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_window_hitbox(
     commands: &mut Commands,
     win: &CollisionWindow,
@@ -283,6 +312,7 @@ pub(crate) fn spawn_window_hitbox(
     origin: Vec3,
     dir: Vec3,
     charge: Option<u8>,
+    payload: ChainPayload,
 ) -> Entity {
     let rot = Quat::from_rotation_arc(Vec3::Z, dir);
     let mut ent = commands.spawn((
@@ -300,6 +330,10 @@ pub(crate) fn spawn_window_hitbox(
             hit_log: std::collections::HashMap::new(),
             done: false,
             charge,
+            is_beam: matches!(win.motion, VolumeMotion::Beam),
+            beam_target: payload.beam_target,
+            hop: payload.hop,
+            visited: payload.visited,
         },
         Transform::from_translation(origin).with_rotation(rot),
     ));
@@ -316,7 +350,7 @@ pub(crate) fn spawn_window_hitbox(
                 gravity,
             });
         }
-        VolumeMotion::Static => {}
+        VolumeMotion::Static | VolumeMotion::Beam => {}
     }
     let hitbox_entity = ent.id();
     commands.trigger(HitWindowOpened {
@@ -350,12 +384,16 @@ pub fn on_hitbox_world_hit(ev: On<HitboxWorldHit>, mut commands: Commands) {
 /// Replaces the old `expire_hitboxes` (whose fuse-despawn was the only death) — a `FirstOnly`
 /// hitbox now also ends immediately on its hit instead of lingering inert until the fuse
 /// (damage-neutral: `done` already blocked every further hit).
+#[allow(clippy::too_many_arguments)]
 pub fn end_hitboxes(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
     mut q: Query<(Entity, &mut Hitbox, &Transform, Option<&WorldHit>)>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
+    hurtboxes: Query<(Entity, &Hurtbox)>,
+    combatants: Query<(&Transform, &crate::core::components::Faction), Without<Hitbox>>,
+    factions: Query<&crate::core::components::Faction>,
 ) {
     let dt = time.delta_secs();
     for (e, mut hb, tf, world_hit) in &mut q {
@@ -374,29 +412,83 @@ pub fn end_hitboxes(
             (EndReason::HitWorld, Some(w)) => w.0,
             _ => tf.translation,
         };
-        // Authored chain reaction: spawn the named Chained window at the end position.
+        // Authored end reaction: spawn at the end position (Chain), or seek the next victim
+        // around it (Retarget).
         if let Some(timeline) = handles.0.get(&hb.skill_id).and_then(|h| timelines.get(h)) {
             let reaction = timeline
                 .collision_windows
                 .iter()
                 .find(|w| w.id == hb.window_id)
                 .and_then(|w| w.on_end.for_reason(reason));
-            if let Some(EndReaction::Chain(next_id)) = reaction {
-                if let Some(next) = timeline
-                    .collision_windows
-                    .iter()
-                    .find(|w| &w.id == next_id)
-                {
-                    spawn_window_hitbox(
-                        &mut commands,
-                        next,
-                        hb.caster,
-                        &hb.skill_id,
-                        position,
-                        hb.aim,
-                        hb.charge,
-                    );
+            match reaction {
+                Some(EndReaction::Chain(next_id)) => {
+                    if let Some(next) = timeline
+                        .collision_windows
+                        .iter()
+                        .find(|w| &w.id == next_id)
+                    {
+                        spawn_window_hitbox(
+                            &mut commands,
+                            next,
+                            hb.caster,
+                            &hb.skill_id,
+                            position,
+                            hb.aim,
+                            hb.charge,
+                            ChainPayload {
+                                hop: hb.hop,
+                                visited: hb.visited.clone(),
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
+                Some(EndReaction::Retarget {
+                    window,
+                    radius,
+                    max_hops,
+                }) if hb.hop < *max_hops => {
+                    if let Some(next) = timeline
+                        .collision_windows
+                        .iter()
+                        .find(|w| &w.id == window)
+                    {
+                        // Everything this chain has struck so far (earlier hitboxes'
+                        // victims + this one's own) is off-limits.
+                        let mut struck = hb.visited.clone();
+                        struck.extend(hb.hit_log.keys().copied());
+                        if let Some((victim, victim_pos)) = nearest_retarget_candidate(
+                            position,
+                            *radius,
+                            next.hit_filter,
+                            hb.caster,
+                            &struck,
+                            &hurtboxes,
+                            &combatants,
+                            &factions,
+                        ) {
+                            let dir = (victim_pos - position).normalize_or(hb.aim);
+                            spawn_window_hitbox(
+                                &mut commands,
+                                next,
+                                hb.caster,
+                                &hb.skill_id,
+                                position,
+                                dir,
+                                hb.charge,
+                                ChainPayload {
+                                    beam_target: Some(victim),
+                                    hop: hb.hop + 1,
+                                    // The new hitbox's own strike lands in ITS hit_log;
+                                    // visited carries everything before it.
+                                    visited: struck,
+                                },
+                            );
+                        }
+                    }
+                }
+                // Retarget with hops exhausted, or no reaction: the chain just ends.
+                _ => {}
             }
         }
         commands.trigger(HitboxEnded {
@@ -409,6 +501,56 @@ pub fn end_hitboxes(
         });
         commands.entity(e).despawn();
     }
+}
+
+/// The nearest combatant to `from` within `radius` that passes `filter` against the caster's
+/// faction and is not in `exclude` — the retarget hop's victim. DETERMINISTIC: candidates sort
+/// by (squared distance, entity index) so equidistant ties never depend on iteration order.
+/// Searches hurtbox OWNERS (the combatant entities), deduped.
+#[allow(clippy::too_many_arguments)]
+fn nearest_retarget_candidate(
+    from: Vec3,
+    radius: f32,
+    filter: crate::assets::HitFilter,
+    caster: Entity,
+    exclude: &[Entity],
+    hurtboxes: &Query<(Entity, &Hurtbox)>,
+    combatants: &Query<(&Transform, &crate::core::components::Faction), Without<Hitbox>>,
+    factions: &Query<&crate::core::components::Faction>,
+) -> Option<(Entity, Vec3)> {
+    let caster_faction = factions.get(caster).ok()?;
+    let r2 = radius * radius;
+    let mut seen = std::collections::HashSet::new();
+    let mut best: Option<(f32, Entity, Vec3)> = None;
+    for (_, hurtbox) in hurtboxes.iter() {
+        let owner = hurtbox.owner;
+        if !seen.insert(owner) || exclude.contains(&owner) {
+            continue;
+        }
+        let Ok((tf, faction)) = combatants.get(owner) else {
+            continue;
+        };
+        if !crate::spatial::filter::passes_filter(
+            filter,
+            *caster_faction,
+            *faction,
+            owner == caster,
+        ) {
+            continue;
+        }
+        let d2 = tf.translation.distance_squared(from);
+        if d2 > r2 {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some((bd2, be, _)) => d2 < *bd2 || (d2 == *bd2 && owner.index() < be.index()),
+        };
+        if better {
+            best = Some((d2, owner, tf.translation));
+        }
+    }
+    best.map(|(_, e, p)| (e, p))
 }
 
 #[cfg(test)]
