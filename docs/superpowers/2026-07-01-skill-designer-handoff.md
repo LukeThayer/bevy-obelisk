@@ -121,7 +121,7 @@ Memory (auto-loaded): `obelisk-arena-project.md` has the phase status + the buil
 
 ---
 
-## ADDENDUM (2026-07-01 evening): M4 BUILT — awaiting merge sign-off + windowed QA
+## ADDENDUM (2026-07-01 evening): M4 BUILT — ✅ MERGED (user QA-approved; obelisk-arena master @ c19da48, obelisk master @ 54d0837)
 
 **M4 rules authoring is implemented, gate-verified, and whole-branch-review-approved (after one fix wave). NOT yet merged to mainlines — the user must sign off.**
 
