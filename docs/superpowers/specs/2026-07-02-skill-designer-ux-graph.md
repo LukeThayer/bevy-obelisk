@@ -97,3 +97,27 @@ fields; the phase-strip-as-property-editor (phases become the Cast node + inspec
    `.cast.ron` stays layout-free)?
 3. Scrub ghost: render as translucent duplicates of the real meshes, or schematic (wireframe
    spheres + trace lines)?
+
+## 7. Round-2 interview decisions (2026-07-02, all answered)
+
+| # | Decision |
+|---|---|
+| D9 | **VFX integration = reference-only, rich pickers.** The lane picker shows LIVE previews (v1: hovering an entry spawns the preset in the viewport at the lane's anchor; v2: baked animated thumbnails via render-to-texture). External `.vfx.ron` edits hot-reload into the skill preview. NO in-context vfx editing / no jump-to-editor — the VFX editor stays its own world. |
+| D10 | **Body anchoring is visual**: (a) skeleton overlay on the caster rig — CLICK a bone to set a lane's socket, selected lane highlights its bone; (b) socketed effects get a draggable gizmo — drag the local offset in 3D, numbers follow; (c) TARGET-side anchors — lanes gain `anchor: Caster\|Target`, so impacts/debuff visuals ride the victim's body (needs the rigged-dummy option; falls back to cue position on rig-less dummies). Per-phase caster staging (windup pose / charge-hands flow) explicitly deferred — one anim slot per cue stays. |
+| D11 | **Rules = task-first tiers + computed readouts.** Tier 1 on the Cast/root inspector: cost, cooldown, damage lines, crit, effects applied. Tier 2 collapsed Advanced: triggers, conversions, pierce/chain, leech. Tier 3 stays TOML. Derived readouts update live: per-hit range, full-chain totals (hops × damage), damage-per-mana, DoT dps from applied effects. |
+| D12 | **Test stage**: charge SLIDER (preview + scrub cast at any charge byte — arcs flatten, damage scales, honest under D2); DUMMY DIRECTOR (place/drag/add/remove dummies in the viewport, HP/armor/resist presets, strafe toggle — chain layouts and splash coverage become testable); EFFECT-STATE SETUP (pre-apply N stacks of any effect to any dummy before the cast — conditional skills become testable). Stage setup is a session resource with an optional per-skill sidecar (never in `.cast.ron`). Audio lanes explicitly deferred. |
+
+## 8. Revised phases
+
+- **P1 — Inspector + pickers + readouts**: selection model (root/window/lane); right-panel
+  labeled tiered inspector; registry pickers (vfx/clips/sockets/chain targets) with
+  hover-preview; tier-1 rules on root + derived readouts; inline validation. The 12-widget
+  rows and lane text fields die here.
+- **P2 — Graph canvas**: nodes/wires/badges, wire-drag to chain/retarget, node timing drag,
+  add-window templates (strike/projectile/zone/beam).
+- **P3 — Sim-backed scrub + charge slider**: ghost world stepped to t, event markers,
+  hit/damage overlays; charge slider feeding preview AND scrub.
+- **P4 — Test stage**: dummy director + effect-state setup (+ rigged-dummy option).
+- **P5 — Body anchoring**: skeleton click-picking, offset gizmo drag, target-side anchors.
+- **P6 — Polish**: undo, keyboard, empty-state hints, baked vfx thumbnails, Rules tab
+  retirement.
