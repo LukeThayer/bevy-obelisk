@@ -83,7 +83,7 @@ this). Edge kinds:
 | Edge | Fires when | Exists today? |
 |---|---|---|
 | `At(phase, offset)` | scheduled time in the cast reached | ✅ `spawn_phase`/`spawn_offset` (`advance.rs:235`) |
-| `OnEnd(reason)` | a volume terminates: `HitEntity` / `HitWorld` / `Fuse` | 📋 increment 1 (`HitboxEnded`, `EndReaction::Chain`) |
+| `OnEnd(reason)` | a volume terminates: `HitEntity` / `HitWorld` / `Fuse` | ✅ shipped 2026-07-02 (`HitboxEnded`, `EndReaction::Chain`) |
 | `OnHit` | EACH hit confirm of a volume/beam (≠ end: an `EveryTick` zone hits many times) | ⚠️ exists as `HitConfirmed` event + rules triggers; not yet an authored graph edge |
 | `OnTick(rate, jitter)` | emitter clock fires while its node is alive | ❌ new |
 | `OnAcquire` / `OnAcquireFail` | acquisition resolved / found nothing | ❌ new (host-coded today) |
@@ -151,7 +151,7 @@ point-anchored zone spawn, OnTick emitter edge, deterministic jitter from `Comba
 | Charge (byte → speed+damage), Point/Entity/Direction aims, LOS/range validate | ✅ shipped |
 | Ballistic motion + gravity, ballistic aim solver, ground plane hook | ✅ landed 2026-07-02 (unpushed) |
 | Rules triggers (skill/effect), chain/pierce *fields*, effects/DoT | ✅ shipped (`stat_core`) |
-| `OnEnd` events + chain-at-position + end cues + cosmetic termination | 📋 increment 1 (spec'd) |
+| `OnEnd` events + chain-at-position + end cues + cosmetic termination | ✅ shipped 2026-07-02 (6afa6ba; firebolt v2 is the proving case) |
 | Authored acquisition (+fallback/fizzle) | ❌ increment 2 candidate |
 | Beam node + two-anchor cues | ❌ increment 2 candidate (chain lightning) |
 | `Retarget` edge (visited set, hops) — geometry for `can_chain` | ❌ increment 2 candidate |

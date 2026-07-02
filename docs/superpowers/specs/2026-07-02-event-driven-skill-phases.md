@@ -1,5 +1,7 @@
 # Event-Driven Skill Phases — Window End Events + Chaining — Design Spec
 
+**Status: SHIPPED 2026-07-02** (obelisk-bevy 6afa6ba + arena firebolt v2). Kept as the design rationale.
+
 **Goal:** Skills are physics-driven event sequences, not static animations. A moving hit volume
 *ends* somewhere — on an enemy, on the world, or on a timer — and that ending, with its world
 position, is a first-class event the skill reacts to: it can chain the next hit volume there
