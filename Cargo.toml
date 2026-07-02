@@ -19,10 +19,10 @@ ron = "0.8"
 thiserror = "1"
 rand = "0.8"
 rand_chacha = "0.3"
-stat_core = { path = "../obelisk/stat_core" }
-loot_core = { path = "../obelisk/loot_core" }
-skill_tree = { path = "../obelisk/skill_tree" }
-tables_core = { path = "../obelisk/tables_core" }
+stat_core = { git = "ssh://git@github.com/vothuul/obelisk.git", branch = "master" }
+loot_core = { git = "ssh://git@github.com/vothuul/obelisk.git", branch = "master" }
+skill_tree = { git = "ssh://git@github.com/vothuul/obelisk.git", branch = "master" }
+tables_core = { git = "ssh://git@github.com/vothuul/obelisk.git", branch = "master" }
 
 [dev-dependencies]
 # enable the in-crate test helpers when running tests
