@@ -265,12 +265,22 @@ pub fn advance_casts(
                     Transform::from_translation(caster_tf.translation + cast.muzzle_offset)
                         .with_rotation(rot),
                 ));
-                if let VolumeMotion::Linear { speed } = win.motion {
-                    // Charge scales projectile world speed (no-op 1.0x when uncharged).
-                    let speed = speed * charge_mult(cast.charge);
-                    ent.insert(Projectile {
-                        velocity: dir * speed,
-                    });
+                // Charge scales projectile world speed (no-op 1.0x when uncharged). Gravity is
+                // NOT charge-scaled — a charged ballistic lob flies flatter and further.
+                match win.motion {
+                    VolumeMotion::Linear { speed } => {
+                        ent.insert(Projectile {
+                            velocity: dir * (speed * charge_mult(cast.charge)),
+                            gravity: 0.0,
+                        });
+                    }
+                    VolumeMotion::Ballistic { speed, gravity } => {
+                        ent.insert(Projectile {
+                            velocity: dir * (speed * charge_mult(cast.charge)),
+                            gravity,
+                        });
+                    }
+                    VolumeMotion::Static => {}
                 }
                 let hitbox_entity = ent.id();
                 commands.trigger(HitWindowOpened {

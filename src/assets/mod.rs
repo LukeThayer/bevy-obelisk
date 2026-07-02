@@ -58,6 +58,13 @@ pub enum VolumeMotion {
     Linear {
         speed: f32,
     },
+    /// Ballistic arc: launched along the (free-look, possibly pitched) aim direction at `speed`,
+    /// pulled down by `gravity` (world units/s²) each fixed step. Charge scales `speed` like
+    /// `Linear`, so a charged lob flies flatter and further.
+    Ballistic {
+        speed: f32,
+        gravity: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
