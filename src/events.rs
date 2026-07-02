@@ -139,11 +139,51 @@ pub struct TriggerFired {
 
 pub use stat_core::Effect as ObeliskEffect;
 
+/// Why a hitbox terminated. Every hitbox ends exactly once with exactly one reason; when
+/// several apply on the same tick the priority is `HitEntity > HitWorld > Fuse`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndReason {
+    /// Terminal entity hit (`HitMode::FirstOnly` after its single confirm).
+    HitEntity,
+    /// The host reported a world impact (see [`HitboxWorldHit`]).
+    HitWorld,
+    /// The window's `active_duration` elapsed — the fuse ran out wherever the hitbox was.
+    Fuse,
+}
+
+/// A hitbox terminated. Fired (with the world position where it happened) for EVERY hitbox by
+/// the `end_hitboxes` funnel, which also spawns the window's authored `on_end` chain reaction
+/// at that position. This is the event that makes skills physics-reactive: the explosion
+/// happens where the bolt actually stopped — enemy, dirt, or mid-air fuse.
+#[derive(Event, Clone, Debug)]
+pub struct HitboxEnded {
+    pub caster: Entity,
+    pub skill_id: String,
+    pub window_id: String,
+    /// World position of the termination (world-impact point, or the hitbox's last transform).
+    pub position: Vec3,
+    pub reason: EndReason,
+    /// The cast's charge, carried so chained damage/cosmetics keep scaling.
+    pub charge: Option<u8>,
+}
+
+/// HOST-fired trigger: `hitbox` struck world geometry at `position`. Obelisk deliberately
+/// knows nothing about the world (floors/walls are the host's job, like physics); the host
+/// detects the impact and fires this — obelisk's `end_hitboxes` funnel then terminates the
+/// hitbox with [`EndReason::HitWorld`] on the next `Advance`.
+#[derive(Event, Clone, Debug)]
+pub struct HitboxWorldHit {
+    pub hitbox: Entity,
+    pub position: Vec3,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CueKind {
     OnCast,
     OnWindow,
     OnHit,
+    /// A window ended (any [`EndReason`]) — the cue fires AT the end position.
+    OnEnd,
 }
 
 /// A VFX/audio cue fired by a skill at a moment in its timeline. The presentation layer

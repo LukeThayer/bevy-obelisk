@@ -35,6 +35,9 @@ pub struct CollisionWindow {
     pub hit_mode: HitMode,
     #[serde(default)]
     pub rehit_interval: Option<f32>,
+    /// What this window's termination spawns, per end reason. Default: nothing (it just ends).
+    #[serde(default)]
+    pub on_end: OnEnd,
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +45,9 @@ pub enum WindowPhase {
     Windup,
     Active,
     Recovery,
+    /// Never spawned by the phase schedule: this window only spawns when a parent window's
+    /// `on_end` chains to it — at the parent's END POSITION, inheriting aim/charge/caster.
+    Chained,
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize)]
@@ -65,6 +71,42 @@ pub enum VolumeMotion {
         speed: f32,
         gravity: f32,
     },
+}
+
+/// What a window's ending causes. One variant today; forks / zones / effect-in-radius are
+/// additive later.
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize, PartialEq)]
+pub enum EndReaction {
+    /// Spawn the named window (which must have `spawn_phase: Chained`) AT THE END POSITION,
+    /// inheriting the cast's aim, charge, and caster attribution.
+    Chain(String),
+}
+
+/// Per-[`EndReason`](crate::events::EndReason) reactions authored on a collision window: what
+/// its termination spawns. All `None` (the serde default) = the window just ends, exactly the
+/// pre-increment behavior.
+#[derive(Debug, Clone, Default, Reflect, Serialize, Deserialize, PartialEq)]
+pub struct OnEnd {
+    /// Reaction when a terminal entity hit ends the window (`HitMode::FirstOnly`).
+    #[serde(default)]
+    pub hit: Option<EndReaction>,
+    /// Reaction when the host reports a world impact (`HitboxWorldHit`).
+    #[serde(default)]
+    pub world: Option<EndReaction>,
+    /// Reaction when `active_duration` elapses (the fuse).
+    #[serde(default)]
+    pub fuse: Option<EndReaction>,
+}
+
+impl OnEnd {
+    /// The reaction (if any) authored for `reason`.
+    pub fn for_reason(&self, reason: crate::events::EndReason) -> Option<&EndReaction> {
+        match reason {
+            crate::events::EndReason::HitEntity => self.hit.as_ref(),
+            crate::events::EndReason::HitWorld => self.world.as_ref(),
+            crate::events::EndReason::Fuse => self.fuse.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,7 +159,10 @@ impl AssetLoader for CastTimelineLoader {
             .read_to_end(&mut bytes)
             .await
             .map_err(|e| CastLoadError::Io(e.to_string()))?;
-        ron::de::from_bytes::<CastTimeline>(&bytes).map_err(|e| CastLoadError::Ron(e.to_string()))
+        let tl = ron::de::from_bytes::<CastTimeline>(&bytes)
+            .map_err(|e| CastLoadError::Ron(e.to_string()))?;
+        validate_timeline(&tl).map_err(CastLoadError::Invalid)?;
+        Ok(tl)
     }
 
     fn extensions(&self) -> &[&str] {
@@ -131,6 +176,60 @@ pub enum CastLoadError {
     Io(String),
     #[error("ron: {0}")]
     Ron(String),
+    #[error("invalid timeline: {0}")]
+    Invalid(String),
+}
+
+/// Referential + boundedness validation of a timeline's `on_end` chain graph:
+/// - every `Chain` target must name an existing window,
+/// - every `Chain` target must have `spawn_phase: Chained` (a scheduled window can't also be
+///   chained — it would double-spawn),
+/// - the chain graph must be ACYCLIC (a chained window re-triggering an ancestor would spawn
+///   hitboxes forever; bounded self-reference needs an explicit counter — a later increment).
+pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
+    let index: std::collections::HashMap<&str, &CollisionWindow> = tl
+        .collision_windows
+        .iter()
+        .map(|w| (w.id.as_str(), w))
+        .collect();
+    let targets = |w: &CollisionWindow| {
+        [&w.on_end.hit, &w.on_end.world, &w.on_end.fuse]
+            .into_iter()
+            .flatten()
+            .map(|EndReaction::Chain(id)| id.clone())
+            .collect::<Vec<_>>()
+    };
+    for w in &tl.collision_windows {
+        for t in targets(w) {
+            let Some(target) = index.get(t.as_str()) else {
+                return Err(format!("window '{}' chains to unknown window '{t}'", w.id));
+            };
+            if target.spawn_phase != WindowPhase::Chained {
+                return Err(format!(
+                    "window '{}' chains to '{t}', which must have spawn_phase: Chained",
+                    w.id
+                ));
+            }
+        }
+    }
+    // Cycle check: DFS from every window over chain edges.
+    for start in &tl.collision_windows {
+        let mut stack = vec![start.id.clone()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let Some(w) = index.get(id.as_str()) else { continue };
+            for t in targets(w) {
+                if t == start.id {
+                    return Err(format!("chain cycle through window '{}'", start.id));
+                }
+                stack.push(t);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Maps skill_id -> loaded timeline handle.
@@ -149,6 +248,8 @@ impl Plugin for ObeliskAssetsPlugin {
             .register_type::<WindowPhase>()
             .register_type::<CollisionShape>()
             .register_type::<VolumeMotion>()
+            .register_type::<OnEnd>()
+            .register_type::<EndReaction>()
             .register_type::<HitFilter>()
             .register_type::<HitMode>()
             .register_type::<CastTargeting>()

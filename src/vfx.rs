@@ -1,5 +1,5 @@
 use crate::assets::{CastTimeline, CastTimelineHandles};
-use crate::events::{CastBegan, CueEvent, CueKind, HitConfirmed, HitWindowOpened};
+use crate::events::{CastBegan, CueEvent, CueKind, HitConfirmed, HitWindowOpened, HitboxEnded};
 use bevy::prelude::*;
 
 /// App-builder ergonomic: run `handler` whenever a `CueEvent` with `cue_id` fires.
@@ -36,6 +36,7 @@ impl Plugin for ObeliskCuePlugin {
         app.add_observer(cue_on_cast);
         app.add_observer(cue_on_window);
         app.add_observer(cue_on_hit);
+        app.add_observer(cue_on_end);
     }
 }
 
@@ -91,6 +92,27 @@ fn cue_on_window(
             source: e.caster,
             position,
             kind: CueKind::OnWindow,
+        });
+    }
+}
+
+/// A window ended: fire the `on_end_{window_id}` cue AT THE END POSITION (the event carries it
+/// — never an entity anchor, so the explosion renders where the bolt actually stopped: enemy,
+/// world, or mid-air fuse).
+fn cue_on_end(
+    ev: On<HitboxEnded>,
+    handles: Res<CastTimelineHandles>,
+    timelines: Res<Assets<CastTimeline>>,
+    mut commands: Commands,
+) {
+    let e = ev.event();
+    let slot = format!("on_end_{}", e.window_id);
+    if let Some(cue_id) = cue_for(&handles, &timelines, &e.skill_id, &slot) {
+        commands.trigger(CueEvent {
+            cue_id,
+            source: e.caster,
+            position: e.position,
+            kind: CueKind::OnEnd,
         });
     }
 }

@@ -29,6 +29,8 @@ pub struct EventRecorder {
     pub effect_applied: Vec<EffectApplied>,
     pub dot_ticked: Vec<DotTicked>,
     pub died: Vec<EntityDied>,
+    pub hitbox_ended: Vec<HitboxEnded>,
+    pub cues: Vec<CueEvent>,
 }
 
 pub struct EventRecorderPlugin;
@@ -61,6 +63,12 @@ impl Plugin for EventRecorderPlugin {
         });
         app.add_observer(|e: On<EntityDied>, mut r: ResMut<EventRecorder>| {
             r.died.push(e.event().clone())
+        });
+        app.add_observer(|e: On<HitboxEnded>, mut r: ResMut<EventRecorder>| {
+            r.hitbox_ended.push(e.event().clone())
+        });
+        app.add_observer(|e: On<CueEvent>, mut r: ResMut<EventRecorder>| {
+            r.cues.push(e.event().clone())
         });
     }
 }

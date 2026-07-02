@@ -1,9 +1,13 @@
-use crate::assets::{CastTargeting, CastTimeline, CastTimelineHandles, VolumeMotion, WindowPhase};
+use crate::assets::{
+    CastTargeting, CastTimeline, CastTimelineHandles, CollisionWindow, EndReaction, VolumeMotion,
+    WindowPhase,
+};
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
 use crate::events::{
-    CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, CooldownStarted, HitWindowOpened,
+    CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, CooldownStarted, EndReason,
+    HitWindowOpened, HitboxEnded, HitboxWorldHit,
 };
 use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
@@ -240,55 +244,22 @@ pub fn advance_casts(
                 WindowPhase::Windup => 0.0,
                 WindowPhase::Active => cast.windup,
                 WindowPhase::Recovery => cast.windup + cast.active,
+                // Chained windows are never on the phase schedule — they spawn from a parent
+                // window's `on_end` (see `end_hitboxes`).
+                WindowPhase::Chained => continue,
             };
             let start = base + win.spawn_offset;
             if prev_elapsed < start && cast.elapsed >= start {
                 cast.fired_windows.push(win.id.clone());
-                let dir = cast.aim_dir;
-                let rot = Quat::from_rotation_arc(Vec3::Z, dir);
-                let mut ent = commands.spawn((
-                    Hitbox {
-                        caster,
-                        skill_id: cast.skill_id.clone(),
-                        window_id: win.id.clone(),
-                        filter: win.hit_filter,
-                        mode: win.hit_mode,
-                        shape: win.shape,
-                        aim: dir,
-                        age: 0.0,
-                        rehit_interval: win.rehit_interval,
-                        remaining: win.active_duration,
-                        hit_log: std::collections::HashMap::new(),
-                        done: false,
-                        charge: cast.charge,
-                    },
-                    Transform::from_translation(caster_tf.translation + cast.muzzle_offset)
-                        .with_rotation(rot),
-                ));
-                // Charge scales projectile world speed (no-op 1.0x when uncharged). Gravity is
-                // NOT charge-scaled — a charged ballistic lob flies flatter and further.
-                match win.motion {
-                    VolumeMotion::Linear { speed } => {
-                        ent.insert(Projectile {
-                            velocity: dir * (speed * charge_mult(cast.charge)),
-                            gravity: 0.0,
-                        });
-                    }
-                    VolumeMotion::Ballistic { speed, gravity } => {
-                        ent.insert(Projectile {
-                            velocity: dir * (speed * charge_mult(cast.charge)),
-                            gravity,
-                        });
-                    }
-                    VolumeMotion::Static => {}
-                }
-                let hitbox_entity = ent.id();
-                commands.trigger(HitWindowOpened {
+                spawn_window_hitbox(
+                    &mut commands,
+                    win,
                     caster,
-                    skill_id: cast.skill_id.clone(),
-                    window_id: win.id.clone(),
-                    hitbox: hitbox_entity,
-                });
+                    &cast.skill_id,
+                    caster_tf.translation + cast.muzzle_offset,
+                    cast.aim_dir,
+                    cast.charge,
+                );
             }
         }
 
@@ -300,19 +271,143 @@ pub fn advance_casts(
     }
 }
 
-/// Despawn hitboxes whose active window elapsed.
-pub fn expire_hitboxes(
+/// Spawn one collision window's `Hitbox` at `origin` facing `dir`, inserting its `Projectile`
+/// motion (charge-scaled speed; gravity NOT charge-scaled — a charged lob flies flatter), and
+/// fire `HitWindowOpened`. Shared by the phase schedule (`advance_casts`, origin = caster +
+/// muzzle) and end-reaction chaining (`end_hitboxes`, origin = the parent's END position).
+pub(crate) fn spawn_window_hitbox(
+    commands: &mut Commands,
+    win: &CollisionWindow,
+    caster: Entity,
+    skill_id: &str,
+    origin: Vec3,
+    dir: Vec3,
+    charge: Option<u8>,
+) -> Entity {
+    let rot = Quat::from_rotation_arc(Vec3::Z, dir);
+    let mut ent = commands.spawn((
+        Hitbox {
+            caster,
+            skill_id: skill_id.to_string(),
+            window_id: win.id.clone(),
+            filter: win.hit_filter,
+            mode: win.hit_mode,
+            shape: win.shape,
+            aim: dir,
+            age: 0.0,
+            rehit_interval: win.rehit_interval,
+            remaining: win.active_duration,
+            hit_log: std::collections::HashMap::new(),
+            done: false,
+            charge,
+        },
+        Transform::from_translation(origin).with_rotation(rot),
+    ));
+    match win.motion {
+        VolumeMotion::Linear { speed } => {
+            ent.insert(Projectile {
+                velocity: dir * (speed * charge_mult(charge)),
+                gravity: 0.0,
+            });
+        }
+        VolumeMotion::Ballistic { speed, gravity } => {
+            ent.insert(Projectile {
+                velocity: dir * (speed * charge_mult(charge)),
+                gravity,
+            });
+        }
+        VolumeMotion::Static => {}
+    }
+    let hitbox_entity = ent.id();
+    commands.trigger(HitWindowOpened {
+        caster,
+        skill_id: skill_id.to_string(),
+        window_id: win.id.clone(),
+        hitbox: hitbox_entity,
+    });
+    hitbox_entity
+}
+
+/// Marker the [`HitboxWorldHit`] observer stamps on the struck hitbox; consumed by
+/// [`end_hitboxes`] as the `HitWorld` end reason (with the impact position).
+#[derive(Component, Debug)]
+pub struct WorldHit(pub Vec3);
+
+/// Observer for the HOST-fired [`HitboxWorldHit`]: mark the hitbox so the next `end_hitboxes`
+/// run terminates it. (An observer + marker rather than direct termination keeps ALL endings
+/// in one deterministic funnel with one reason-priority rule.)
+pub fn on_hitbox_world_hit(ev: On<HitboxWorldHit>, mut commands: Commands) {
+    let e = ev.event();
+    commands.entity(e.hitbox).try_insert(WorldHit(e.position));
+}
+
+/// The hitbox termination funnel — the ONLY place hitboxes die. Ticks age/remaining, then ends
+/// any hitbox that is done (`HitMode::FirstOnly` consumed → `HitEntity`), world-struck
+/// (`WorldHit` marker → `HitWorld`), or out of time (`Fuse`) — priority in that order. Ending
+/// = spawn the window's authored `on_end` reaction AT THE END POSITION (chained windows carry
+/// the original caster, aim, and charge), fire [`HitboxEnded`], despawn.
+///
+/// Replaces the old `expire_hitboxes` (whose fuse-despawn was the only death) — a `FirstOnly`
+/// hitbox now also ends immediately on its hit instead of lingering inert until the fuse
+/// (damage-neutral: `done` already blocked every further hit).
+pub fn end_hitboxes(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
-    mut q: Query<(Entity, &mut Hitbox)>,
+    mut q: Query<(Entity, &mut Hitbox, &Transform, Option<&WorldHit>)>,
+    handles: Res<CastTimelineHandles>,
+    timelines: Res<Assets<CastTimeline>>,
 ) {
     let dt = time.delta_secs();
-    for (e, mut hb) in &mut q {
+    for (e, mut hb, tf, world_hit) in &mut q {
         hb.age += dt;
         hb.remaining -= dt;
-        if hb.remaining <= 0.0 {
-            commands.entity(e).despawn();
+        let reason = if hb.done {
+            EndReason::HitEntity
+        } else if world_hit.is_some() {
+            EndReason::HitWorld
+        } else if hb.remaining <= 0.0 {
+            EndReason::Fuse
+        } else {
+            continue;
+        };
+        let position = match (reason, world_hit) {
+            (EndReason::HitWorld, Some(w)) => w.0,
+            _ => tf.translation,
+        };
+        // Authored chain reaction: spawn the named Chained window at the end position.
+        if let Some(timeline) = handles.0.get(&hb.skill_id).and_then(|h| timelines.get(h)) {
+            let reaction = timeline
+                .collision_windows
+                .iter()
+                .find(|w| w.id == hb.window_id)
+                .and_then(|w| w.on_end.for_reason(reason));
+            if let Some(EndReaction::Chain(next_id)) = reaction {
+                if let Some(next) = timeline
+                    .collision_windows
+                    .iter()
+                    .find(|w| &w.id == next_id)
+                {
+                    spawn_window_hitbox(
+                        &mut commands,
+                        next,
+                        hb.caster,
+                        &hb.skill_id,
+                        position,
+                        hb.aim,
+                        hb.charge,
+                    );
+                }
+            }
         }
+        commands.trigger(HitboxEnded {
+            caster: hb.caster,
+            skill_id: hb.skill_id.clone(),
+            window_id: hb.window_id.clone(),
+            position,
+            reason,
+            charge: hb.charge,
+        });
+        commands.entity(e).despawn();
     }
 }
 

@@ -130,13 +130,15 @@ impl Plugin for ObeliskSimPlugin {
                 timeline::advance::validate_casts.in_set(ObeliskSet::Validate),
                 (
                     timeline::advance::advance_casts,
-                    timeline::advance::expire_hitboxes,
+                    timeline::advance::end_hitboxes,
                 )
                     .in_set(ObeliskSet::Advance),
                 spatial::projectile::move_projectiles.in_set(ObeliskSet::Projectiles),
                 spatial::detect::detect_overlaps.in_set(ObeliskSet::ResolveHits),
             ),
         );
+        // Host-fired world impacts feed the `end_hitboxes` funnel via a marker component.
+        app.add_observer(timeline::advance::on_hitbox_world_hit);
     }
 }
 

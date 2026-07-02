@@ -77,7 +77,8 @@ mod tests {
     #[test]
     fn pitched_aim_lobs_up_then_falls() {
         // 45° up at 10 u/s with g=10: apex around t=0.7 s, back near y=0 by t≈1.4 s.
-        let v = Vec3::new(10.0 * 0.7071, 10.0 * 0.7071, 0.0);
+        let comp = 10.0 * std::f32::consts::FRAC_1_SQRT_2;
+        let v = Vec3::new(comp, comp, 0.0);
         let (mut app, e) = ballistic_app(v, 10.0);
         step(&mut app, 43); // ~0.7 s: near apex, still above ground
         let y_apex = app.world().get::<Transform>(e).unwrap().translation.y;
