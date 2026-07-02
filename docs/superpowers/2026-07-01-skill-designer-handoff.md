@@ -93,6 +93,8 @@ These cost hours to discover. They are NOT in the plan (they were environment su
   2. **Sequencing:** build all of "full effect authoring" in one M4 pass, or in **stages** (skill rules → skill triggers → effect bodies) so each lands verified? (Recommend stages given the two big pickers + the reload caveat.)
   3. Minor defaults I proposed (fine unless user objects): don't add Reflect · one unified Save for all 3 files · "new skill" offers both an Attack seed and a Spell seed (note `Skill::default()` is a weapon-scaling *attack* — a spell needs `weapon_effectiveness=0.0` + flat `base_damages`).
 
+> **⛔ SUPERSEDED (2026-07-01, later the same day):** the user LOCKED all four M4 decisions (full effect authoring / registry-swap API / full-rewrite TOML / staged build), the plan was written (`plans/2026-07-01-skill-designer-m4-plan.md`), and **M4 WAS BUILT AND REVIEW-APPROVED** via subagent-driven development. See the addendum at the bottom of this file for the current state — the sections above are historical.
+
 **Recommended first action for the next session:** resume the clarification with the user (the 3 sub-questions above), lock the M4 scope, then write an M4 implementation plan (superpowers:writing-plans) and build it — using the same orchestration that worked for M1–M3 (pre-warm the arena_editor target; serial verify-or-revert task workflow; test logic on minimal/arena_sim harnesses; gate on net-test + golden). The `authoring_surface`/`ui_sketch`/`design_forks` fields of the research (in the workflow output, and summarized in the understanding doc) are the plan's raw material.
 
 ---
@@ -116,3 +118,22 @@ cd /Users/luke/src/obelisk-arena/crates/arena_editor && cargo run --bin arena-ed
 ```
 
 Memory (auto-loaded): `obelisk-arena-project.md` has the phase status + the build-env facts + the skill-designer decisions.
+
+---
+
+## ADDENDUM (2026-07-01 evening): M4 BUILT — awaiting merge sign-off + windowed QA
+
+**M4 rules authoring is implemented, gate-verified, and whole-branch-review-approved (after one fix wave). NOT yet merged to mainlines — the user must sign off.**
+
+**Branches (local, never pushed):**
+- obelisk-arena `feat/skill-designer-m4` @ `c19da48` — 13 commits off master `eb0e83e`. All of M4: Rules tab (full `stat_core::Skill` form + 34-variant TriggerCondition picker + use_conditions), Effects tab (full `EffectConfig` form + searchable StatType picker over `all_variants_with_effects` + effect-trigger rows), skill switcher + sanitized New Attack/Spell/Effect seeds, unified Save (cast.ron + skillfx.ron unconditional; rules TOML gated on dirty + trigger-ref validity → SkillRegistry hot-reload; effect TOML gated on dirty → registry hot-swap).
+- obelisk `feat/effect-registry-swap` @ `54d0837` — 1 commit off master `feb0daa`: `stat_core::config::swap_effect_registry` (leak-on-swap `RwLock<Option<&'static EffectRegistry>>`; `effect_registry()` keeps `-> &'static`, all ~16 call sites verified per-call/uncached; first-init-wins preserved).
+
+**Verification state:** stat_core 294/294; obelisk-bevy goldens BYTE-IDENTICAL + suite 88; net-test session PASS; arena_editor 71/71 (incl. 25 new M4 tests); windowed editor boots clean (3× 15-20s checks). The 3 `skill_tree::crafting` failures at the obelisk workspace root are PRE-EXISTING on unmodified master (controller-verified via checkout) — unrelated.
+
+**Review trail:** per-task spec+quality reviews (all approved; sdd ledger at `obelisk-arena/.superpowers/sdd/progress.md` has the full record incl. accepted-RIDE minors) + final whole-branch review (fable) → 2 Important findings, both PLAN-level gaps, fixed in `c19da48`: (1) rules TOML write was plan-specified as unconditional — now gated on `rules.dirty` (an unparsable rules file opens load-or-blank; ungated Save would overwrite the real game-shared TOML with the blank seed); (2) the plan gave effects no id-authoring — added new-id field + pure `sanitize_id` (`[a-z0-9_-]`, also applied to the skill new-id field; closes the blank_effect TOML-injection panic + path traversal).
+
+**REMAINING (user):**
+1. **Merge sign-off** — merge `feat/skill-designer-m4` → obelisk-arena master and `feat/effect-registry-swap` → obelisk master (obelisk-bevy untouched by M4 code; its docs/plan commits are already on main).
+2. **Interactive windowed QA** (no agent can drive the window): `cd obelisk-arena/crates/arena_editor && cargo run`, press `K`: (a) Rules tab — bump firebolt damage, Save, F4 → bigger hits; (b) Effects tab — burn `base_damage_percent` 0.5→2.0, Save ("N effects swapped"), F4 → harder DoT WITHOUT restart (the swap-API payoff); (c) new-id fields — create a spell + an effect, reopen from pickers. Revert QA config edits after.
+3. Known accepted edges (review-triaged RIDE): typing an EXISTING skill id into "new id" loads its real timeline/fx while reseeding rules; effect-trigger rows can save with empty trigger_skill (effect loader doesn't validate refs); `list_skill_ids` returns empty on unreadable dir. Next milestones unchanged: M4-follow-ons in the plan's Deferred section, then Stage-B predicted damage / AI monster (see Pending in memory).
