@@ -2,14 +2,18 @@ use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// Authored skill timeline, schema v2 (spec D6, §3.2). v1's authored causality — `on_end`
+/// `Chain`/`Retarget` reactions, `WindowPhase::Chained` — is DELETED: causality now lives in
+/// rules triggers (hit-phase + lifecycle conditions, Tasks 7-8). `CastTargeting` (replaced by
+/// acquisition, Task 10) and the never-read `CastDelivery` are gone too. `deny_unknown_fields`
+/// makes stale v1 content (and author typos) fail LOUD at load instead of half-parsing.
 #[derive(Asset, Reflect, Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CastTimeline {
     pub skill_id: String,
     pub phase_durations: PhaseDurations,
     #[serde(default)]
     pub collision_windows: Vec<CollisionWindow>,
-    pub targeting: CastTargeting,
-    pub delivery: CastDelivery,
     #[serde(default)]
     pub vfx_cues: std::collections::HashMap<String, String>,
 }
@@ -22,11 +26,23 @@ pub struct PhaseDurations {
 }
 
 #[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CollisionWindow {
     pub id: String,
-    pub spawn_phase: WindowPhase,
+    /// The window's spawn ROLE: `Scheduled` puts it on the phase schedule; `Template` keeps it
+    /// off every schedule — it exists only to be instantiated by an emitter (Task 11).
+    pub spawn: WindowSpawn,
+    /// The frame the window's origin resolves against (see [`WindowAnchor`]).
     #[serde(default)]
-    pub spawn_offset: f32,
+    pub anchor: WindowAnchor,
+    /// World-axis-aligned offset added to the resolved anchor position (e.g. `(0, 8, 0)` hangs
+    /// a storm cloud 8 units above the cast point).
+    #[serde(default)]
+    pub anchor_offset: Vec3,
+    /// `false` = a carrier volume: it flies, ends, and fires cues/events, but overlap detection
+    /// skips it entirely — it can never produce a `HitConfirmed`. Default `true`.
+    #[serde(default = "default_true")]
+    pub strikes: bool,
     pub active_duration: f32,
     pub shape: CollisionShape,
     #[serde(default)]
@@ -35,9 +51,37 @@ pub struct CollisionWindow {
     pub hit_mode: HitMode,
     #[serde(default)]
     pub rehit_interval: Option<f32>,
-    /// What this window's termination spawns, per end reason. Default: nothing (it just ends).
-    #[serde(default)]
-    pub on_end: OnEnd,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// When (whether) a window enters the world on its own.
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq)]
+pub enum WindowSpawn {
+    /// On the phase schedule: eligible at `phase`'s start time plus `offset` seconds.
+    Scheduled {
+        phase: WindowPhase,
+        #[serde(default)]
+        offset: f32,
+    },
+    /// Never self-schedules — instantiated only by an emitter (Task 11). Until emitters land,
+    /// authoring a `Template` window is a validation error (`validate_timeline`).
+    Template,
+}
+
+/// Where a window's origin resolves. For a triggered execution, the CAST POINT is the trigger's
+/// payload position (the hit / impact / expiry the trigger fired at); for a player cast, both
+/// variants resolve to the caster's muzzle origin until acquisition (Task 10) gives casts a
+/// distinct acquired point.
+#[derive(Debug, Clone, Copy, Default, Reflect, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WindowAnchor {
+    /// The caster entity's position at the moment the window spawns.
+    #[default]
+    Caster,
+    /// The position this cast/execution was invoked at.
+    CastPoint,
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,9 +89,6 @@ pub enum WindowPhase {
     Windup,
     Active,
     Recovery,
-    /// Never spawned by the phase schedule: this window only spawns when a parent window's
-    /// `on_end` chains to it — at the parent's END POSITION, inheriting aim/charge/caster.
-    Chained,
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize)]
@@ -71,57 +112,12 @@ pub enum VolumeMotion {
         speed: f32,
         gravity: f32,
     },
-    /// Instantaneous link to the hitbox's DESIGNATED TARGET (the cast's entity aim, or the
-    /// entity a `Retarget` reaction found): no overlap test — the target IS the payload; the
-    /// hitbox strikes it on resolve and ends `HitEntity` at the victim. With no designated
+    /// Instantaneous link to the hitbox's DESIGNATED TARGET (the cast's entity aim; rules-
+    /// driven chain hops re-key onto this in Task 12): no overlap test — the target IS the
+    /// payload; the hitbox strikes it on resolve and ends `HitEntity` at the victim. With no designated
     /// target (e.g. a direction-aimed cast of a beam skill) it strikes nothing and fuses out —
     /// the paid-fizzle miss. `shape` is unused for hitting (kept for the editor gizmo).
     Beam,
-}
-
-/// What a window's ending causes. Forks / zones / effect-in-radius are additive later.
-#[derive(Debug, Clone, Reflect, Serialize, Deserialize, PartialEq)]
-pub enum EndReaction {
-    /// Spawn the named window (which must have `spawn_phase: Chained`) AT THE END POSITION,
-    /// inheriting the cast's aim, charge, and caster attribution.
-    Chain(String),
-    /// Search a sphere of `radius` around the end position for the NEAREST entity passing the
-    /// spawned window's hit filter that this chain has not already struck, and spawn `window`
-    /// (must be `Chained`, normally `motion: Beam`) targeted onto it. Stops silently when no
-    /// candidate exists or the chain has already made `max_hops` hops. UNLIKE `Chain`, a
-    /// `Retarget` may name its own window (self-hop) — the hop counter bounds the cycle.
-    Retarget {
-        window: String,
-        radius: f32,
-        max_hops: u8,
-    },
-}
-
-/// Per-[`EndReason`](crate::events::EndReason) reactions authored on a collision window: what
-/// its termination spawns. All `None` (the serde default) = the window just ends, exactly the
-/// pre-increment behavior.
-#[derive(Debug, Clone, Default, Reflect, Serialize, Deserialize, PartialEq)]
-pub struct OnEnd {
-    /// Reaction when a terminal entity hit ends the window (`HitMode::FirstOnly`).
-    #[serde(default)]
-    pub hit: Option<EndReaction>,
-    /// Reaction when the host reports a world impact (`HitboxWorldHit`).
-    #[serde(default)]
-    pub world: Option<EndReaction>,
-    /// Reaction when `active_duration` elapses (the fuse).
-    #[serde(default)]
-    pub fuse: Option<EndReaction>,
-}
-
-impl OnEnd {
-    /// The reaction (if any) authored for `reason`.
-    pub fn for_reason(&self, reason: crate::events::EndReason) -> Option<&EndReaction> {
-        match reason {
-            crate::events::EndReason::HitEntity => self.hit.as_ref(),
-            crate::events::EndReason::HitWorld => self.world.as_ref(),
-            crate::events::EndReason::Fuse => self.fuse.as_ref(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
@@ -137,21 +133,6 @@ pub enum HitMode {
     OncePerTarget,
     FirstOnly,
     EveryTick,
-}
-
-#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
-pub enum CastTargeting {
-    SelfCast,
-    SingleEntity { range: f32 },
-    Direction { range: f32 },
-    Cone { angle: f32, range: f32 },
-}
-
-#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
-pub enum CastDelivery {
-    Melee,
-    Instant,
-    Projectile { speed: f32 },
 }
 
 /// RON loader for `*.cast.ron`.
@@ -195,81 +176,18 @@ pub enum CastLoadError {
     Invalid(String),
 }
 
-/// Referential + boundedness validation of a timeline's `on_end` reaction graph:
-/// - every `Chain`/`Retarget` target must name an existing window with `spawn_phase: Chained`
-///   (a scheduled window can't also be spawned by a reaction — it would double-spawn),
-/// - `Retarget` must have `max_hops >= 1` and `radius > 0` (a zero-hop/zero-radius retarget
-///   can never fire),
-/// - the CHAIN-edge graph must be ACYCLIC (an unbounded chain cycle would spawn hitboxes
-///   forever). `Retarget` edges may cycle — including self-hops — because the per-hitbox hop
-///   counter bounds them.
+/// Timeline validation, v2. The v1 chain-graph rules died with the authored `on_end` reaction
+/// schema; what remains to check today:
+/// - a `Template` window must be referenced by an emitter — emitters land in Task 11, so until
+///   then ANY `Template` window is an error (validation stays honest at every commit).
 pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
-    let index: std::collections::HashMap<&str, &CollisionWindow> = tl
-        .collision_windows
-        .iter()
-        .map(|w| (w.id.as_str(), w))
-        .collect();
-    let reactions = |w: &CollisionWindow| {
-        [&w.on_end.hit, &w.on_end.world, &w.on_end.fuse]
-            .into_iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    let target_of = |r: &EndReaction| match r {
-        EndReaction::Chain(id) => id.clone(),
-        EndReaction::Retarget { window, .. } => window.clone(),
-    };
     for w in &tl.collision_windows {
-        for r in reactions(w) {
-            let t = target_of(&r);
-            let Some(target) = index.get(t.as_str()) else {
-                return Err(format!("window '{}' chains to unknown window '{t}'", w.id));
-            };
-            if target.spawn_phase != WindowPhase::Chained {
-                return Err(format!(
-                    "window '{}' chains to '{t}', which must have spawn_phase: Chained",
-                    w.id
-                ));
-            }
-            if let EndReaction::Retarget {
-                radius, max_hops, ..
-            } = r
-            {
-                if max_hops == 0 || radius <= 0.0 {
-                    return Err(format!(
-                        "window '{}' retargets with max_hops {max_hops} / radius {radius}: \
-                         both must be positive",
-                        w.id
-                    ));
-                }
-            }
-        }
-    }
-    // Cycle check over CHAIN edges only (retarget cycles are hop-bounded by construction).
-    let chain_targets = |w: &CollisionWindow| {
-        reactions(w)
-            .into_iter()
-            .filter_map(|r| match r {
-                EndReaction::Chain(id) => Some(id),
-                EndReaction::Retarget { .. } => None,
-            })
-            .collect::<Vec<_>>()
-    };
-    for start in &tl.collision_windows {
-        let mut stack = vec![start.id.clone()];
-        let mut seen = std::collections::HashSet::new();
-        while let Some(id) = stack.pop() {
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            let Some(w) = index.get(id.as_str()) else { continue };
-            for t in chain_targets(w) {
-                if t == start.id {
-                    return Err(format!("chain cycle through window '{}'", start.id));
-                }
-                stack.push(t);
-            }
+        if w.spawn == WindowSpawn::Template {
+            return Err(format!(
+                "window '{}' is a Template, but nothing can reference a Template window yet \
+                 (emitters land in Task 11)",
+                w.id
+            ));
         }
     }
     Ok(())
@@ -288,21 +206,153 @@ impl Plugin for ObeliskAssetsPlugin {
         app.register_type::<CastTimeline>()
             .register_type::<PhaseDurations>()
             .register_type::<CollisionWindow>()
+            .register_type::<WindowSpawn>()
+            .register_type::<WindowAnchor>()
             .register_type::<WindowPhase>()
             .register_type::<CollisionShape>()
             .register_type::<VolumeMotion>()
-            .register_type::<OnEnd>()
-            .register_type::<EndReaction>()
             .register_type::<HitFilter>()
-            .register_type::<HitMode>()
-            .register_type::<CastTargeting>()
-            .register_type::<CastDelivery>();
+            .register_type::<HitMode>();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn basic_window(id: &str) -> CollisionWindow {
+        CollisionWindow {
+            id: id.into(),
+            spawn: WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0,
+            },
+            anchor: WindowAnchor::Caster,
+            anchor_offset: Vec3::ZERO,
+            strikes: true,
+            active_duration: 1.0,
+            shape: CollisionShape::Sphere { radius: 0.5 },
+            motion: VolumeMotion::Static,
+            hit_filter: HitFilter::Enemies,
+            hit_mode: HitMode::OncePerTarget,
+            rehit_interval: None,
+        }
+    }
+
+    fn timeline_with(win: CollisionWindow) -> CastTimeline {
+        CastTimeline {
+            skill_id: "test".into(),
+            phase_durations: PhaseDurations {
+                windup: 0.1,
+                active: 0.1,
+                recovery: 0.1,
+            },
+            collision_windows: vec![win],
+            vfx_cues: Default::default(),
+        }
+    }
+
+    #[test]
+    fn v2_window_round_trips() {
+        let tl = timeline_with(CollisionWindow {
+            spawn: WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0,
+            },
+            anchor: WindowAnchor::CastPoint,
+            anchor_offset: Vec3::new(0.0, 8.0, 0.0),
+            strikes: false,
+            ..basic_window("storm")
+        });
+        let s = ron::ser::to_string_pretty(&tl, Default::default()).unwrap();
+        let back: CastTimeline = ron::from_str(&s).unwrap();
+        assert_eq!(back.collision_windows[0].anchor, WindowAnchor::CastPoint);
+        assert_eq!(
+            back.collision_windows[0].anchor_offset,
+            Vec3::new(0.0, 8.0, 0.0)
+        );
+        assert!(!back.collision_windows[0].strikes);
+        assert_eq!(
+            back.collision_windows[0].spawn,
+            WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0
+            }
+        );
+    }
+
+    /// A v1 firebolt-style timeline: `spawn_phase`/`spawn_offset` fields, an authored
+    /// `on_end: Chain` reaction, a `Chained` blast window, and the deleted
+    /// `targeting`/`delivery` blocks. None of it may silently half-parse.
+    const OLD_FIREBOLT_V1_RON: &str = r#"(
+        skill_id: "firebolt",
+        phase_durations: ( windup: 0.3, active: 0.1, recovery: 0.2 ),
+        collision_windows: [
+            ( id: "bolt", spawn_phase: Active, spawn_offset: 0.0, active_duration: 2.0,
+              shape: Sphere( radius: 0.5 ), motion: Linear( speed: 20.0 ),
+              hit_filter: Enemies, hit_mode: FirstOnly,
+              on_end: ( hit: Some(Chain("blast")) ) ),
+            ( id: "blast", spawn_phase: Chained, spawn_offset: 0.0, active_duration: 0.05,
+              shape: Sphere( radius: 1.5 ), motion: Static,
+              hit_filter: Enemies, hit_mode: OncePerTarget ),
+        ],
+        targeting: SingleEntity( range: 15.0 ),
+        delivery: Projectile( speed: 20.0 ),
+    )"#;
+
+    #[test]
+    fn old_chain_schema_fails_loud() {
+        assert!(
+            ron::from_str::<CastTimeline>(OLD_FIREBOLT_V1_RON).is_err(),
+            "v1 on_end/Chained content must not silently half-parse"
+        );
+    }
+
+    /// v2 content may omit `anchor` / `anchor_offset` / `strikes` / `offset`: they default to
+    /// Caster / zero / true / 0.0.
+    #[test]
+    fn v2_defaults_apply_when_fields_are_omitted() {
+        let src = r#"(
+            skill_id: "minimal",
+            phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+            collision_windows: [
+                ( id: "w", spawn: Scheduled( phase: Active ), active_duration: 1.0,
+                  shape: Sphere( radius: 0.5 ), hit_filter: Enemies, hit_mode: OncePerTarget ),
+            ],
+        )"#;
+        let tl: CastTimeline = ron::from_str(src).expect("minimal v2 content parses");
+        let w = &tl.collision_windows[0];
+        assert_eq!(w.anchor, WindowAnchor::Caster);
+        assert_eq!(w.anchor_offset, Vec3::ZERO);
+        assert!(w.strikes, "strikes defaults to true");
+        assert_eq!(
+            w.spawn,
+            WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0
+            }
+        );
+    }
+
+    /// Until emitters land (Task 11) nothing can reference a `Template` window, so authoring
+    /// one is a validation error — validation stays honest at every commit.
+    #[test]
+    fn template_windows_are_rejected_until_emitters_land() {
+        let tl = timeline_with(CollisionWindow {
+            spawn: WindowSpawn::Template,
+            ..basic_window("tpl")
+        });
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("Template") && err.contains("tpl"),
+            "error names the offending window: {err}"
+        );
+    }
+
+    #[test]
+    fn scheduled_windows_validate() {
+        assert!(validate_timeline(&timeline_with(basic_window("w"))).is_ok());
+    }
 
     #[test]
     fn loads_firebolt_cast_ron() {
@@ -369,14 +419,6 @@ mod tests {
         assert_eq!(
             format!("{:?}", parsed.collision_windows[0].shape),
             format!("{:?}", reparsed.collision_windows[0].shape)
-        );
-        assert_eq!(
-            format!("{:?}", parsed.targeting),
-            format!("{:?}", reparsed.targeting)
-        );
-        assert_eq!(
-            format!("{:?}", parsed.delivery),
-            format!("{:?}", reparsed.delivery)
         );
         assert_eq!(parsed.vfx_cues, reparsed.vfx_cues);
     }

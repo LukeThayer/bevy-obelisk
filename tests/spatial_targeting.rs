@@ -136,6 +136,7 @@ fn cleave_does_not_hit_allies() {
 }
 
 #[test]
+#[ignore = "acquisition lands in Task 10"]
 fn out_of_range_cast_is_rejected() {
     let mut t = ObeliskTestApp::new(7);
     load_cast(&mut t, "cleave", "cleave.cast.ron");

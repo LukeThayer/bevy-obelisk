@@ -158,8 +158,8 @@ pub enum EndReason {
 }
 
 /// A hitbox terminated. Fired (with the world position where it happened) for EVERY hitbox by
-/// the `end_hitboxes` funnel, which also spawns the window's authored `on_end` chain reaction
-/// at that position. This is the event that makes skills physics-reactive: the explosion
+/// the `end_hitboxes` funnel, which also evaluates the ending skill's lifecycle triggers at
+/// that position. This is the event that makes skills physics-reactive: the explosion
 /// happens where the bolt actually stopped — enemy, dirt, or mid-air fuse.
 #[derive(Event, Clone, Debug)]
 pub struct HitboxEnded {

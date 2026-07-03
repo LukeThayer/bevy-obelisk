@@ -1,1 +1,5 @@
-   2	CastRejected	caster=player skill=cleave reason=OutOfRange
+   2	CastBegan	caster=player skill=cleave dur=0.300
+   7	CastPhase	caster=player skill=cleave Windup->Active
+   7	HitWindow	caster=player skill=cleave window=arc
+  13	CastPhase	caster=player skill=cleave Active->Recovery
+  19	CastPhase	caster=player skill=cleave Recovery->Done

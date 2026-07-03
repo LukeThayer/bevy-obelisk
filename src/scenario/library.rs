@@ -82,13 +82,16 @@ pub fn faction_filter() -> Scenario {
         )
 }
 
-/// Out of range: an enemy 10 units away, cleave range is 3.
-/// Mirrors `tests/spatial_targeting.rs::out_of_range_cast_is_rejected`.
-/// Expect `CastRejected reason=OutOfRange` and no Damage.
+/// Out of range: an enemy 10 units away, cleave's cone reaches 3.
+/// Mirrors `tests/spatial_targeting.rs::out_of_range_cast_is_rejected` (currently `#[ignore]`d).
+/// Schema v2 (Task 9) DELETED the authored `CastTargeting` range gate with the v1 schema, so
+/// until acquisition (Task 10) restores range gating the cast VALIDATES and whiffs: expect
+/// `CastBegan` + phase events and still no Damage. Task 10 re-goldens this to `CastRejected
+/// reason=OutOfRange`.
 pub fn out_of_range() -> Scenario {
     Scenario::new("out_of_range", 7, 30)
         .describe(
-            "A cast at a target beyond the skill's range is rejected (OutOfRange) with no damage.",
+            "A cast at a target beyond the skill's reach whiffs with no damage (the authored range gate died with schema v2; acquisition restores OutOfRange rejection in Task 10).",
         )
         .cast_asset("cleave")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)

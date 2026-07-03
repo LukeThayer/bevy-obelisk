@@ -2,9 +2,10 @@
 //! tasks call when a trigger names a skill with a timeline. Spawns that skill's collision
 //! windows at an arbitrary world position, on a virtual clock, as a free sub-cast — WITHOUT a
 //! caster cast-state (no `PendingCast`/`ActiveCast`, no validation gates, no phases on the
-//! caster). Windows spawn AT the payload position directly; anchor resolution (offsetting a
-//! window from the payload by an authored local-space anchor) arrives in Task 9.
-use crate::assets::{CastTimeline, CastTimelineHandles, WindowPhase};
+//! caster). Window origins resolve per the authored anchor (Task 9): `CastPoint` = the
+//! execution's payload position, `Caster` = the caster entity's position at spawn time; the
+//! window's `anchor_offset` applies on top in world axes.
+use crate::assets::{CastTimeline, CastTimelineHandles, WindowAnchor, WindowSpawn};
 use crate::timeline::advance::{spawn_window_hitbox, ChainPayload};
 use bevy::prelude::*;
 
@@ -17,7 +18,8 @@ pub const MAX_TRIGGER_DEPTH: u8 = 8;
 /// from any caster's cast-state.
 #[derive(Clone, Copy, Debug)]
 pub struct ExecPayload {
-    /// World position every window in this execution spawns at (v1: no anchor offsetting).
+    /// The execution's CAST POINT: what `WindowAnchor::CastPoint` windows resolve against
+    /// (the trigger's hit / impact / expiry position).
     pub position: Vec3,
     /// Facing direction handed to `spawn_window_hitbox` (projectile heading / cone axis).
     pub direction: Vec3,
@@ -41,7 +43,7 @@ pub struct TriggeredExec {
     pub payload: ExecPayload,
     pub elapsed: f32,
     /// Parallel to the timeline's `collision_windows` (by index): whether that window has
-    /// already spawned (or, for `Chained` windows, been permanently skipped). Lazily sized to
+    /// already spawned (or, for `Template` windows, been permanently skipped). Lazily sized to
     /// the timeline's window count on first tick (the timeline asset may not be loaded yet when
     /// `execute_skill_timeline` runs — it only has `&mut Commands`, no asset access).
     pub spawned: Vec<bool>,
@@ -75,7 +77,9 @@ pub fn execute_skill_timeline(
 }
 
 /// Ticks every [`TriggeredExec`]'s virtual clock by the fixed delta and spawns each not-yet-
-/// spawned window whose (unscaled) start time has elapsed, at `payload.position`. `Chained`
+/// spawned window whose (unscaled) start time has elapsed, at its resolved anchor (`CastPoint`
+/// = `payload.position`, `Caster` = the caster's position now — falling back to the payload
+/// position if the caster has no `Transform` — plus the authored `anchor_offset`). `Template`
 /// windows are never on the schedule (same rule as `advance_casts`) — permanently skipped.
 /// Despawns the exec entity once every window has spawned (or been skipped). An unknown skill id
 /// (no handle registered) `warn!`s and drops the exec rather than ticking forever; a registered
@@ -87,6 +91,7 @@ pub fn advance_triggered_execs(
     mut execs: Query<(Entity, &mut TriggeredExec)>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
+    transforms: Query<&Transform>,
 ) {
     let dt = time.delta_secs();
     for (entity, mut exec) in &mut execs {
@@ -120,20 +125,27 @@ pub fn advance_triggered_execs(
             if exec.spawned[i] {
                 continue;
             }
-            if win.spawn_phase == WindowPhase::Chained {
-                // Never on the phase schedule — only spawns via a parent window's `on_end`.
+            if win.spawn == WindowSpawn::Template {
+                // Never on the phase schedule — only instantiated by an emitter (Task 11).
                 exec.spawned[i] = true;
                 continue;
             }
             let start = super::advance::window_start_time(&timeline.phase_durations, win);
             if exec.elapsed >= start {
                 exec.spawned[i] = true;
+                let anchor_base = match win.anchor {
+                    WindowAnchor::CastPoint => exec.payload.position,
+                    WindowAnchor::Caster => transforms
+                        .get(exec.caster)
+                        .map(|t| t.translation)
+                        .unwrap_or(exec.payload.position),
+                };
                 spawn_window_hitbox(
                     &mut commands,
                     win,
                     exec.caster,
                     &exec.skill_id,
-                    exec.payload.position,
+                    anchor_base + win.anchor_offset,
                     exec.payload.direction,
                     exec.payload.charge,
                     ChainPayload {

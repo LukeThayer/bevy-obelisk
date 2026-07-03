@@ -34,19 +34,24 @@ pub struct Hitbox {
     /// Optional per-cast charge carried from the `ActiveCast`, forwarded to `HitConfirmed` so the
     /// resolve can scale damage. `None` = uncharged (1.0x).
     pub charge: Option<u8>,
+    /// Copied from the window's authored `strikes` flag. `false` = a carrier volume: both hit
+    /// paths (`detect_overlaps` and `resolve_beam_hits`) skip it — it can never produce a
+    /// `HitConfirmed`, but it still moves, ends, and fires its cues/events.
+    pub strikes: bool,
     /// `VolumeMotion::Beam`: this hitbox strikes its designated target directly (no overlap
     /// test — `detect_overlaps` skips it; `resolve_beam_hits` handles it).
     pub is_beam: bool,
-    /// The beam's designated victim: the cast's entity aim for a scheduled beam window, or the
-    /// entity a `Retarget` reaction found. `None` on a beam = nothing to strike (the paid
-    /// fizzle: the window just fuses out).
+    /// The beam's designated victim: the cast's entity aim for a scheduled beam window (chain
+    /// hops re-key onto this from rules `chain_count` in Task 12). `None` on a beam = nothing
+    /// to strike (the paid fizzle: the window just fuses out).
     pub beam_target: Option<Entity>,
-    /// How many retarget hops preceded this hitbox (0 = the initial window). `Retarget`
-    /// reactions stop once `hop >= max_hops` — the bound that makes retarget cycles legal.
+    /// How many chain hops preceded this hitbox (0 = the initial window). Unpopulated since
+    /// schema v2 deleted the authored `Retarget` reaction; Task 12 re-populates it from rules
+    /// `chain_count`.
     pub hop: u8,
     /// Entities already struck by EARLIER hitboxes in this chain (this hitbox's own victims
-    /// are in `hit_log`). Retarget searches exclude `visited ∪ hit_log` so a chain never
-    /// revisits a victim.
+    /// are in `hit_log`). Chain-hop searches exclude `visited ∪ hit_log` so a chain never
+    /// revisits a victim. Unpopulated since schema v2 (see `hop`).
     pub visited: Vec<Entity>,
     /// Trigger-generation depth this hitbox was spawned at (0 = a player cast). Copied from
     /// `ChainPayload.depth`.
@@ -109,6 +114,7 @@ mod tests {
             hit_log: HashMap::new(),
             done: false,
             charge: None,
+            strikes: true,
             is_beam: false,
             beam_target: None,
             hop: 0,

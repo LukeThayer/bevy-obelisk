@@ -6,8 +6,8 @@
 
 use bevy::prelude::*;
 use obelisk_bevy::assets::{
-    CastDelivery, CastTargeting, CollisionShape, CollisionWindow, HitFilter, HitMode, OnEnd,
-    PhaseDurations, VolumeMotion, WindowPhase,
+    CollisionShape, CollisionWindow, HitFilter, HitMode, PhaseDurations, VolumeMotion,
+    WindowAnchor, WindowPhase, WindowSpawn,
 };
 use obelisk_bevy::combat::system::{
     is_invalid_lifecycle_target, is_invalid_timeline_target, partition_conditions,
@@ -177,15 +177,19 @@ fn free_sub_cast_hit_does_not_start_a_cooldown() {
 fn window(id: &str, offset: f32) -> CollisionWindow {
     CollisionWindow {
         id: id.into(),
-        spawn_phase: WindowPhase::Active,
-        spawn_offset: offset,
+        spawn: WindowSpawn::Scheduled {
+            phase: WindowPhase::Active,
+            offset,
+        },
+        anchor: WindowAnchor::Caster,
+        anchor_offset: Vec3::ZERO,
+        strikes: true,
         active_duration: 0.15,
         shape: CollisionShape::Sphere { radius: 0.5 },
         motion: VolumeMotion::Static,
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::OncePerTarget,
         rehit_interval: None,
-        on_end: OnEnd::default(),
     }
 }
 
@@ -200,8 +204,6 @@ fn two_window_timeline() -> CastTimeline {
             recovery: 0.0,
         },
         collision_windows: vec![window("a", 0.0), window("b", 0.5)],
-        targeting: CastTargeting::SelfCast,
-        delivery: CastDelivery::Instant,
         vfx_cues: HashMap::new(),
     }
 }
@@ -388,8 +390,6 @@ fn executor_retries_while_timeline_asset_is_still_loading() {
             recovery: 0.0,
         },
         collision_windows: vec![window("a", 0.0)],
-        targeting: CastTargeting::SelfCast,
-        delivery: CastDelivery::Instant,
         vfx_cues: HashMap::new(),
     };
     let _ = t
@@ -428,16 +428,16 @@ fn executor_despawns_on_unknown_skill_id() {
     );
 }
 
-/// Finding 3 (review, minor): a `Chained` window on the executor's timeline must never spawn on
-/// its own schedule (only via a parent window's `on_end`, which this fixture never triggers) —
+/// Schema v2 (was v1's `Chained` variant of this pin): a `Template` window on the executor's
+/// timeline must never spawn on its own schedule (it exists only for emitters, Task 11) —
 /// total spawned count stays pinned to the two `Active` windows.
 #[test]
-fn executor_never_spawns_chained_window_on_its_own_schedule() {
+fn executor_never_spawns_template_window_on_its_own_schedule() {
     let mut t = ObeliskTestApp::new(6);
     let mut tl = two_window_timeline();
-    let mut chained = window("c", 0.0);
-    chained.spawn_phase = WindowPhase::Chained;
-    tl.collision_windows.push(chained);
+    let mut template = window("c", 0.0);
+    template.spawn = WindowSpawn::Template;
+    tl.collision_windows.push(template);
     let handle = t
         .app
         .world_mut()
@@ -456,7 +456,7 @@ fn executor_never_spawns_chained_window_on_its_own_schedule() {
     assert_eq!(
         hitbox_count_total_seen(&t),
         2,
-        "the Chained window never spawns on the phase schedule — only A and B open"
+        "the Template window never spawns on the phase schedule — only A and B open"
     );
 }
 
@@ -504,8 +504,8 @@ base_damages = [{{ type = "fire", min = 15.0, max = 15.0 }}]
 }
 
 /// The bolt: one `Active` window, a `Linear` projectile aimed at the dummy — a real spatial
-/// travel + contact, exactly like `end_events.rs`'s chaining bolt (minus any `on_end` reaction;
-/// Task 7's trigger is a rules-level `SkillCondition`, not a spatial chain).
+/// travel + contact, exactly like `end_events.rs`'s bolt (Task 7's trigger is a rules-level
+/// `SkillCondition`, not a spatial chain).
 fn fireball_bolt_timeline() -> CastTimeline {
     CastTimeline {
         skill_id: "fireball".into(),
@@ -516,26 +516,27 @@ fn fireball_bolt_timeline() -> CastTimeline {
         },
         collision_windows: vec![CollisionWindow {
             id: "bolt".into(),
-            spawn_phase: WindowPhase::Active,
-            spawn_offset: 0.0,
+            spawn: WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0,
+            },
+            anchor: WindowAnchor::Caster,
+            anchor_offset: Vec3::ZERO,
+            strikes: true,
             active_duration: 1.0,
             shape: CollisionShape::Sphere { radius: 0.5 },
             motion: VolumeMotion::Linear { speed: 10.0 },
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::FirstOnly,
             rehit_interval: None,
-            on_end: OnEnd::default(),
         }],
-        targeting: CastTargeting::SingleEntity { range: 15.0 },
-        delivery: CastDelivery::Projectile { speed: 10.0 },
         vfx_cues: HashMap::new(),
     }
 }
 
 /// The explosion: one offset-0 `Active` `Static` sphere, wide enough (radius 1.5) to reach the
-/// dummy from the bolt's contact point — mirrors `triggered_exec.rs`'s own `two_window_timeline`
-/// pattern (`SelfCast`/`Instant` targeting/delivery are unused by `execute_skill_timeline`, which
-/// spawns windows directly at `ExecPayload::position`).
+/// dummy from the bolt's contact point, anchored `CastPoint` so it resolves at the execution's
+/// payload position.
 fn fireball_explosion_timeline() -> CastTimeline {
     CastTimeline {
         skill_id: "fireball_explosion".into(),
@@ -546,18 +547,22 @@ fn fireball_explosion_timeline() -> CastTimeline {
         },
         collision_windows: vec![CollisionWindow {
             id: "blast".into(),
-            spawn_phase: WindowPhase::Active,
-            spawn_offset: 0.0,
+            spawn: WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0,
+            },
+            // The explosion belongs AT the trigger's payload position (the bolt's impact) —
+            // exactly what `CastPoint` resolves to for a triggered execution.
+            anchor: WindowAnchor::CastPoint,
+            anchor_offset: Vec3::ZERO,
+            strikes: true,
             active_duration: 0.2,
             shape: CollisionShape::Sphere { radius: 1.5 },
             motion: VolumeMotion::Static,
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
-            on_end: OnEnd::default(),
         }],
-        targeting: CastTargeting::SelfCast,
-        delivery: CastDelivery::Instant,
         vfx_cues: HashMap::new(),
     }
 }

@@ -1,6 +1,6 @@
 use crate::assets::{
-    CastTargeting, CastTimeline, CastTimelineHandles, CollisionWindow, EndReaction, PhaseDurations,
-    VolumeMotion, WindowPhase,
+    CastTimeline, CastTimelineHandles, CollisionWindow, PhaseDurations, VolumeMotion, WindowPhase,
+    WindowSpawn,
 };
 use crate::combat::system::is_invalid_lifecycle_target;
 use crate::core::components::Attributes;
@@ -19,17 +19,11 @@ use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
 use stat_core::TriggerCondition;
 
-/// The max cast range for a targeting mode, if it gates on range. `None` = no range gate.
-pub fn targeting_range(targeting: &CastTargeting) -> Option<f32> {
-    match targeting {
-        CastTargeting::SelfCast => None,
-        CastTargeting::SingleEntity { range }
-        | CastTargeting::Direction { range }
-        | CastTargeting::Cone { range, .. } => Some(*range),
-    }
-}
-
 /// Validate pending casts: skill known? timeline loaded? mana/conditions ok? Then insert ActiveCast.
+///
+/// NOTE (schema v2): the authored `CastTargeting` range gate died with the v1 schema —
+/// range/aim acquisition arrives properly in Task 10. Until then no cast is rejected
+/// `OutOfRange`; line-of-sight gating on entity aims survives unchanged.
 #[allow(clippy::too_many_arguments)]
 pub fn validate_casts(
     mut commands: Commands,
@@ -126,24 +120,6 @@ pub fn validate_casts(
         } else {
             aim_dir
         };
-
-        if let Some(max_range) = targeting_range(&timeline.targeting) {
-            let aim_point = match req.aim {
-                CastAim::Entity(e) => transforms.get(e).ok().map(|t| t.translation),
-                CastAim::Point(p) => Some(p),
-                CastAim::Direction(_) => None, // no distance to gate on
-            };
-            if let Some(point) = aim_point {
-                if point.distance(caster_pos) > max_range {
-                    commands.trigger(CastRejected {
-                        caster,
-                        skill_id: req.skill_id.clone(),
-                        reason: CastRejectReason::OutOfRange,
-                    });
-                    continue;
-                }
-            }
-        }
 
         // Line-of-sight check for entity-aimed casts (fail-open: no hit = clear).
         if let CastAim::Entity(e) = req.aim {
@@ -256,9 +232,9 @@ pub fn advance_casts(
             if cast.fired_windows.contains(&win.id) {
                 continue;
             }
-            // Chained windows are never on the phase schedule — they spawn from a parent
-            // window's `on_end` (see `end_hitboxes`).
-            if win.spawn_phase == WindowPhase::Chained {
+            // Template windows are never on the phase schedule — they exist only to be
+            // instantiated by an emitter (Task 11).
+            if win.spawn == WindowSpawn::Template {
                 continue;
             }
             // The cast's phase durations are already speed-scaled (`ActiveCast::windup` etc. —
@@ -272,12 +248,15 @@ pub fn advance_casts(
             let start = window_start_time(&effective, win);
             if prev_elapsed < start && cast.elapsed >= start {
                 cast.fired_windows.push(win.id.clone());
+                // Anchor resolution for a player cast: until acquisition (Task 10) gives casts
+                // a distinct acquired point, `Caster` and `CastPoint` both resolve to the
+                // caster's muzzle origin; `anchor_offset` applies on top in world axes.
                 spawn_window_hitbox(
                     &mut commands,
                     win,
                     caster,
                     &cast.skill_id,
-                    caster_tf.translation + cast.muzzle_offset,
+                    caster_tf.translation + cast.muzzle_offset + win.anchor_offset,
                     cast.aim_dir,
                     cast.charge,
                     ChainPayload {
@@ -303,23 +282,25 @@ pub fn advance_casts(
 /// there with the cast's SPEED-SCALED effective durations) — also used by the triggered-timeline
 /// executor (`advance_triggered_execs`, Task 6), which passes the UNSCALED authored durations: a
 /// triggered explosion runs on its own virtual clock and does not inherit the caster's cast/
-/// attack speed. Callers must skip `WindowPhase::Chained` windows before calling this (they are
-/// never on the phase schedule — they only spawn from a parent window's `on_end`).
+/// attack speed. Callers must skip `WindowSpawn::Template` windows before calling this (they
+/// are never on the phase schedule — they only spawn via an emitter, Task 11).
 pub(crate) fn window_start_time(durations: &PhaseDurations, win: &CollisionWindow) -> f32 {
-    let base = match win.spawn_phase {
+    let WindowSpawn::Scheduled { phase, offset } = win.spawn else {
+        debug_assert!(false, "window_start_time called on a Template window");
+        return 0.0;
+    };
+    let base = match phase {
         WindowPhase::Windup => 0.0,
         WindowPhase::Active => durations.windup,
         WindowPhase::Recovery => durations.windup + durations.active,
-        WindowPhase::Chained => {
-            debug_assert!(false, "window_start_time called on a Chained window");
-            0.0
-        }
     };
-    base + win.spawn_offset
+    base + offset
 }
 
 /// The chain payload a spawned window inherits: who to strike (beams), how many hops came
-/// before, and which entities the chain has already struck.
+/// before, and which entities the chain has already struck. Since schema v2 nothing populates
+/// `hop`/`visited` (the authored `Retarget` reaction died) — Task 12 re-populates them from
+/// rules `can_chain`/`chain_count` fields.
 #[derive(Default)]
 pub(crate) struct ChainPayload {
     pub beam_target: Option<Entity>,
@@ -332,7 +313,8 @@ pub(crate) struct ChainPayload {
 /// Spawn one collision window's `Hitbox` at `origin` facing `dir`, inserting its `Projectile`
 /// motion (charge-scaled speed; gravity NOT charge-scaled — a charged lob flies flatter), and
 /// fire `HitWindowOpened`. Shared by the phase schedule (`advance_casts`, origin = caster +
-/// muzzle) and end reactions (`end_hitboxes`, origin = the parent's END position).
+/// muzzle + anchor offset) and the triggered-timeline executor (`advance_triggered_execs`,
+/// origin = the resolved window anchor).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_window_hitbox(
     commands: &mut Commands,
@@ -360,6 +342,7 @@ pub(crate) fn spawn_window_hitbox(
             hit_log: std::collections::HashMap::new(),
             done: false,
             charge,
+            strikes: win.strikes,
             is_beam: matches!(win.motion, VolumeMotion::Beam),
             beam_target: payload.beam_target,
             hop: payload.hop,
@@ -409,16 +392,15 @@ pub fn on_hitbox_world_hit(ev: On<HitboxWorldHit>, mut commands: Commands) {
 /// The hitbox termination funnel — the ONLY place hitboxes die. Ticks age/remaining, then ends
 /// any hitbox that is done (`HitMode::FirstOnly` consumed → `HitEntity`), world-struck
 /// (`WorldHit` marker → `HitWorld`), or out of time (`Fuse`) — priority in that order. Ending
-/// = spawn the window's authored `on_end` reaction AT THE END POSITION (chained windows carry
-/// the original caster, aim, and charge), evaluate the ending skill's Lifecycle conditions
-/// (Task 8, below), fire [`HitboxEnded`], despawn.
+/// = evaluate the ending skill's Lifecycle conditions (Task 8, below) AT THE END POSITION,
+/// fire [`HitboxEnded`], despawn. (Schema v2: the authored `on_end` Chain/Retarget reaction
+/// arms are DELETED — end-driven causality now runs entirely through rules triggers.)
 ///
 /// Replaces the old `expire_hitboxes` (whose fuse-despawn was the only death) — a `FirstOnly`
 /// hitbox now also ends immediately on its hit instead of lingering inert until the fuse
 /// (damage-neutral: `done` already blocked every further hit).
 ///
-/// Task 8 — lifecycle evaluation: independent of the legacy `on_end` Chain/Retarget reaction
-/// above (a spatial-authoring concept, keyed by `window_id`), this evaluates the ending skill's
+/// Task 8 — lifecycle evaluation: evaluates the ending skill's
 /// RULES conditions (`SkillRegistry`, keyed by `skill_id`) whose `TriggerCondition` is
 /// `OnImpact`/`OnExpire` — `HitWorld → OnImpact`, `Fuse → OnExpire`, `HitEntity → nothing` (that
 /// hit already ran Task 7's hit-phase evaluation in `on_hit_confirmed`). Lifecycle conditions
@@ -429,17 +411,12 @@ pub fn on_hitbox_world_hit(ev: On<HitboxWorldHit>, mut commands: Commands) {
 /// (`is_invalid_lifecycle_target`) warns and is skipped — there's no defending entity to resolve
 /// a packet against at a world impact or a fuse-out in empty air, so unlike a hit-phase
 /// timeline-target condition there is no packet fallback to fall back to.
-#[allow(clippy::too_many_arguments)]
 pub fn end_hitboxes(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
     mut q: Query<(Entity, &mut Hitbox, &Transform, Option<&WorldHit>)>,
     handles: Res<CastTimelineHandles>,
-    timelines: Res<Assets<CastTimeline>>,
     registry: Res<SkillRegistry>,
-    hurtboxes: Query<(Entity, &Hurtbox)>,
-    combatants: Query<(&Transform, &crate::core::components::Faction), Without<Hitbox>>,
-    factions: Query<&crate::core::components::Faction>,
 ) {
     let dt = time.delta_secs();
     for (e, mut hb, tf, world_hit) in &mut q {
@@ -458,84 +435,9 @@ pub fn end_hitboxes(
             (EndReason::HitWorld, Some(w)) => w.0,
             _ => tf.translation,
         };
-        // Authored end reaction: spawn at the end position (Chain), or seek the next victim
-        // around it (Retarget).
-        if let Some(timeline) = handles.0.get(&hb.skill_id).and_then(|h| timelines.get(h)) {
-            let reaction = timeline
-                .collision_windows
-                .iter()
-                .find(|w| w.id == hb.window_id)
-                .and_then(|w| w.on_end.for_reason(reason));
-            match reaction {
-                Some(EndReaction::Chain(next_id)) => {
-                    if let Some(next) = timeline.collision_windows.iter().find(|w| &w.id == next_id)
-                    {
-                        spawn_window_hitbox(
-                            &mut commands,
-                            next,
-                            hb.caster,
-                            &hb.skill_id,
-                            position,
-                            hb.aim,
-                            hb.charge,
-                            ChainPayload {
-                                hop: hb.hop,
-                                visited: hb.visited.clone(),
-                                depth: hb.depth,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-                Some(EndReaction::Retarget {
-                    window,
-                    radius,
-                    max_hops,
-                }) if hb.hop < *max_hops => {
-                    if let Some(next) = timeline.collision_windows.iter().find(|w| &w.id == window)
-                    {
-                        // Everything this chain has struck so far (earlier hitboxes'
-                        // victims + this one's own) is off-limits.
-                        let mut struck = hb.visited.clone();
-                        struck.extend(hb.hit_log.keys().copied());
-                        if let Some((victim, victim_pos)) = nearest_retarget_candidate(
-                            position,
-                            *radius,
-                            next.hit_filter,
-                            hb.caster,
-                            &struck,
-                            &hurtboxes,
-                            &combatants,
-                            &factions,
-                        ) {
-                            let dir = (victim_pos - position).normalize_or(hb.aim);
-                            spawn_window_hitbox(
-                                &mut commands,
-                                next,
-                                hb.caster,
-                                &hb.skill_id,
-                                position,
-                                dir,
-                                hb.charge,
-                                ChainPayload {
-                                    beam_target: Some(victim),
-                                    hop: hb.hop + 1,
-                                    // The new hitbox's own strike lands in ITS hit_log;
-                                    // visited carries everything before it.
-                                    visited: struck,
-                                    depth: hb.depth,
-                                },
-                            );
-                        }
-                    }
-                }
-                // Retarget with hops exhausted, or no reaction: the chain just ends.
-                _ => {}
-            }
-        }
-        // Task 8 — lifecycle evaluation (spec §3.2): independent of the on_end reaction above,
-        // runs for every ending regardless. `HitEntity` maps to nothing — the hit path
-        // (`on_hit_confirmed`) already ran Task 7's evaluation for that ending.
+        // Task 8 — lifecycle evaluation (spec §3.2): runs for every ending. `HitEntity` maps
+        // to nothing — the hit path (`on_hit_confirmed`) already ran Task 7's evaluation for
+        // that ending.
         let lifecycle_cond = match reason {
             EndReason::HitWorld => Some(TriggerCondition::OnImpact),
             EndReason::Fuse => Some(TriggerCondition::OnExpire),
@@ -588,9 +490,13 @@ pub fn end_hitboxes(
 }
 
 /// The nearest combatant to `from` within `radius` that passes `filter` against the caster's
-/// faction and is not in `exclude` — the retarget hop's victim. DETERMINISTIC: candidates sort
+/// faction and is not in `exclude` — the chain hop's victim. DETERMINISTIC: candidates sort
 /// by (squared distance, entity index) so equidistant ties never depend on iteration order.
 /// Searches hurtbox OWNERS (the combatant entities), deduped.
+///
+/// Unreferenced since schema v2 deleted the authored `Retarget` reaction — Task 12 re-keys
+/// this to rules `can_chain`/`chain_count` fields.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn nearest_retarget_candidate(
     from: Vec3,
@@ -640,7 +546,7 @@ fn nearest_retarget_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::{CastTargeting, CollisionShape, HitFilter, HitMode, OnEnd};
+    use crate::assets::{CollisionShape, HitFilter, HitMode, WindowAnchor};
 
     fn durations() -> PhaseDurations {
         PhaseDurations {
@@ -653,15 +559,16 @@ mod tests {
     fn window(phase: WindowPhase, offset: f32) -> CollisionWindow {
         CollisionWindow {
             id: "w".into(),
-            spawn_phase: phase,
-            spawn_offset: offset,
+            spawn: WindowSpawn::Scheduled { phase, offset },
+            anchor: WindowAnchor::Caster,
+            anchor_offset: Vec3::ZERO,
+            strikes: true,
             active_duration: 1.0,
             shape: CollisionShape::Sphere { radius: 0.5 },
             motion: VolumeMotion::Static,
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
-            on_end: OnEnd::default(),
         }
     }
 
@@ -700,28 +607,6 @@ mod tests {
         assert_eq!(
             window_start_time(&d, &window(WindowPhase::Recovery, 0.25)),
             d.windup + d.active + 0.25
-        );
-    }
-
-    #[test]
-    fn self_cast_has_no_range_gate() {
-        assert_eq!(targeting_range(&CastTargeting::SelfCast), None);
-    }
-    #[test]
-    fn single_entity_range_is_extracted() {
-        assert_eq!(
-            targeting_range(&CastTargeting::SingleEntity { range: 12.0 }),
-            Some(12.0)
-        );
-    }
-    #[test]
-    fn cone_range_is_extracted() {
-        assert_eq!(
-            targeting_range(&CastTargeting::Cone {
-                angle: 90.0,
-                range: 4.0
-            }),
-            Some(4.0)
         );
     }
 }

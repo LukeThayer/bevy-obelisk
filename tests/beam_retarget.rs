@@ -1,14 +1,16 @@
-//! Increment 2 — beam windows + retarget hops (chain lightning). A `VolumeMotion::Beam` window
-//! strikes its DESIGNATED target (the cast's entity aim / a retarget pick) with no overlap
-//! test; `EndReaction::Retarget` seeks the nearest un-struck valid target around the end
-//! position and spawns the next beam onto it, bounded by `max_hops`. Also pins the LOS
+//! Beam windows (chain lightning's delivery). A `VolumeMotion::Beam` window strikes its
+//! DESIGNATED target (the cast's entity aim) with no overlap test. Also pins the LOS
 //! self-block fix: an entity-aimed cast by a caster with its OWN child hurtbox validates.
+//!
+//! Schema v2 (Task 9) deleted the authored `EndReaction::Retarget` hop machinery; the hop
+//! tests below are `#[ignore]`d as Task 12's RED fixtures — Task 12 re-keys hop behavior to
+//! the rules `can_chain`/`chain_count` fields and un-ignores them.
 #![cfg(feature = "test-support")]
 
 use bevy::prelude::*;
 use obelisk_bevy::assets::{
-    validate_timeline, CastDelivery, CastTargeting, CollisionShape, CollisionWindow, EndReaction,
-    HitFilter, HitMode, OnEnd, PhaseDurations, VolumeMotion, WindowPhase,
+    CollisionShape, CollisionWindow, HitFilter, HitMode, PhaseDurations, VolumeMotion,
+    WindowAnchor, WindowPhase, WindowSpawn,
 };
 use obelisk_bevy::prelude::*;
 use obelisk_bevy::testkit::ObeliskTestApp;
@@ -27,27 +29,21 @@ fn make_block(id: &str, life: f64, mana: f64) -> StatBlock {
 fn beam_window(id: &str, phase: WindowPhase) -> CollisionWindow {
     CollisionWindow {
         id: id.into(),
-        spawn_phase: phase,
-        spawn_offset: 0.0,
+        spawn: WindowSpawn::Scheduled { phase, offset: 0.0 },
+        anchor: WindowAnchor::Caster,
+        anchor_offset: Vec3::ZERO,
+        strikes: true,
         active_duration: 0.1,
         shape: CollisionShape::Sphere { radius: 0.3 },
         motion: VolumeMotion::Beam,
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::FirstOnly,
         rehit_interval: None,
-        on_end: OnEnd {
-            hit: Some(EndReaction::Retarget {
-                window: "hop".into(),
-                radius: 6.0,
-                max_hops: 3,
-            }),
-            world: None,
-            fuse: None,
-        },
     }
 }
 
-/// arc (Active, entity-aimed) --hit--> Retarget("hop") --hit--> Retarget("hop") ... x3 hops.
+/// arc (Active, entity-aimed beam). v1 authored `on_end: Retarget("hop")` here; the hop chain
+/// returns as rules `chain_count` in Task 12.
 fn chain_timeline() -> CastTimeline {
     CastTimeline {
         skill_id: "firebolt".into(),
@@ -56,12 +52,7 @@ fn chain_timeline() -> CastTimeline {
             active: 0.05,
             recovery: 0.05,
         },
-        collision_windows: vec![
-            beam_window("arc", WindowPhase::Active),
-            beam_window("hop", WindowPhase::Chained),
-        ],
-        targeting: CastTargeting::SingleEntity { range: 15.0 },
-        delivery: CastDelivery::Instant,
+        collision_windows: vec![beam_window("arc", WindowPhase::Active)],
         vfx_cues: HashMap::from([
             ("on_window_arc".to_string(), "cl_arc".to_string()),
             ("on_window_hop".to_string(), "cl_hop".to_string()),
@@ -124,6 +115,7 @@ fn setup(seed: u64) -> (ObeliskTestApp, Entity, Vec<Entity>) {
 }
 
 #[test]
+#[ignore = "re-keyed to rules chain_count in Task 12"]
 fn chain_hops_nearest_unvisited_and_stops_at_max_hops() {
     let (mut t, caster, dummies) = setup(3);
     t.app
@@ -171,6 +163,41 @@ fn chain_hops_nearest_unvisited_and_stops_at_max_hops() {
     assert!((hop1.position.z - 3.0).abs() < 0.5);
 }
 
+/// The two-anchor cue contract, kept GREEN while the hop tests above wait for Task 12: an
+/// entity-aimed beam's `on_window_{id}` cue carries BOTH anchors — from the beam origin
+/// (caster) to its designated victim.
+#[test]
+fn entity_aimed_beam_cue_is_two_point() {
+    let (mut t, caster, dummies) = setup(3);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(caster)
+        .cast_skill_at("firebolt", dummies[0]);
+    t.advance_ticks(60);
+
+    let rec = t.rec();
+    assert!(
+        rec.cast_rejected.is_empty(),
+        "entity cast with own hurtbox must validate (LOS fix): {:?}",
+        rec.cast_rejected.first().map(|r| &r.reason)
+    );
+    let victims: Vec<Entity> = rec.hit_confirmed.iter().map(|h| h.target).collect();
+    assert_eq!(victims, vec![dummies[0]], "the beam strikes its entity aim");
+    let cue = rec
+        .cues
+        .iter()
+        .find(|c| c.cue_id == "cl_arc")
+        .expect("the arc window cue fires");
+    let from = cue.position_from.expect("beam window cues are two-point");
+    assert!(from.z.abs() < 0.5, "arc starts at the caster: {from:?}");
+    assert!(
+        (cue.position.z - 2.0).abs() < 0.5,
+        "arc ends at the victim: {:?}",
+        cue.position
+    );
+}
+
 #[test]
 fn direction_aimed_beam_is_a_paid_fizzle() {
     let (mut t, caster, _dummies) = setup(5);
@@ -182,8 +209,15 @@ fn direction_aimed_beam_is_a_paid_fizzle() {
     t.advance_ticks(60);
 
     let rec = t.rec();
-    assert_eq!(rec.cast_began.len(), 1, "the cast itself succeeds (costs paid)");
-    assert!(rec.hit_confirmed.is_empty(), "no designated target, no strikes");
+    assert_eq!(
+        rec.cast_began.len(),
+        1,
+        "the cast itself succeeds (costs paid)"
+    );
+    assert!(
+        rec.hit_confirmed.is_empty(),
+        "no designated target, no strikes"
+    );
     assert!(
         rec.hitbox_ended
             .iter()
@@ -193,6 +227,7 @@ fn direction_aimed_beam_is_a_paid_fizzle() {
 }
 
 #[test]
+#[ignore = "re-keyed to rules chain_count in Task 12"]
 fn charge_scales_every_strike_in_the_chain() {
     let total = |charge: Option<u8>| {
         let (mut t, caster, dummies) = setup(9);
@@ -238,26 +273,4 @@ fn same_seed_is_deterministic() {
             .collect::<Vec<_>>()
     };
     assert_eq!(run(), run());
-}
-
-#[test]
-fn validation_rules_for_retarget() {
-    // Self-retarget (hop -> hop) is legal: the hop counter bounds it.
-    assert!(validate_timeline(&chain_timeline()).is_ok());
-
-    // max_hops 0 can never fire.
-    let mut tl = chain_timeline();
-    tl.collision_windows[0].on_end.hit = Some(EndReaction::Retarget {
-        window: "hop".into(),
-        radius: 6.0,
-        max_hops: 0,
-    });
-    assert!(validate_timeline(&tl).unwrap_err().contains("positive"));
-
-    // Retarget must point at a Chained window.
-    let mut tl = chain_timeline();
-    tl.collision_windows[1].spawn_phase = WindowPhase::Active;
-    assert!(validate_timeline(&tl)
-        .unwrap_err()
-        .contains("spawn_phase: Chained"));
 }
