@@ -67,6 +67,28 @@ pub fn is_invalid_lifecycle_target(cond: &SkillCondition, handles: &CastTimeline
         && !handles.0.contains_key(&cond.trigger_skill)
 }
 
+/// True when `cond` is a timeline-target condition (its `trigger_skill` has a registered
+/// timeline) whose `TriggerCondition` is `EveryNthHit`. Forbidden by spec §3.2: "`EveryNthHit` on
+/// timeline-target conditions is forbidden by validation in v1 (its counter lives inside
+/// stat_core's calc path)". The counter mutation only happens inside stat_core's inline
+/// `resolve_damage_with_triggers` calc path — `TriggerConditionEval::evaluate_pre` always returns
+/// `false` for `EveryNthHit` ("handled externally", see `stat_core::damage::triggers`) — and a
+/// timeline-target condition is stripped from the resolve clone before it ever reaches that path
+/// (see `partition_conditions`), so without this guard the condition would just silently NEVER
+/// fire: `eval_condition_obelisk_side`'s `PreCalculation` arm calls `evaluate_pre`, which is
+/// hard-wired `false` for this variant. `on_hit_confirmed` warns and SKIPS execution for a
+/// flagged condition (still strips it from the resolve clone same as any other timeline-target
+/// condition — resolving it inline would silently reinterpret a forbidden trigger as a packet,
+/// which is worse than dropping it). Pure predicate (no `warn!`), `pub` for the same external-
+/// test reason as `is_invalid_timeline_target`.
+pub fn is_unsupported_timeline_condition(
+    cond: &SkillCondition,
+    handles: &CastTimelineHandles,
+) -> bool {
+    handles.0.contains_key(&cond.trigger_skill)
+        && matches!(cond.condition, TriggerCondition::EveryNthHit { .. })
+}
+
 /// Splits `conditions` into (timeline-target, packet) buckets by whether `trigger_skill` has a
 /// registered `CastTimeline` handle:
 ///   - timeline-target: Task 6's skill B has its own timeline. `on_hit_confirmed` strips these
@@ -120,7 +142,11 @@ pub fn partition_conditions(
 ///     condition phase; there is no defined mapping for this integration.
 ///   - `Lifecycle` -> always false. `OnImpact` / `OnExpire` are the spatial layer's job (window
 ///     end events, Task 8+), never evaluated during hit resolution.
-fn eval_condition_obelisk_side(cond: &TriggerCondition, out: &HitOutcome) -> bool {
+///
+/// `pub(crate)`: the facade (`src/facade/combat.rs::resolve_skill_hit`) reuses this exact
+/// evaluation, rather than re-implementing (or worse, silently diverging from) the observer's
+/// timeline-target semantics — final-review fix wave, item 2.
+pub(crate) fn eval_condition_obelisk_side(cond: &TriggerCondition, out: &HitOutcome) -> bool {
     match cond.phase() {
         ConditionPhase::PreCalculation => {
             cond.evaluate_pre(&out.attacker_before, &out.defender_before)
@@ -172,6 +198,15 @@ pub fn on_hit_confirmed(
                 ev.skill_id, cond.trigger_skill
             );
         }
+        if is_unsupported_timeline_condition(cond, &handles) {
+            warn!(
+                "skill '{}' condition triggers timeline skill '{}' using EveryNthHit — \
+                 EveryNthHit on timeline-target conditions is forbidden (v1, spec §3.2: its \
+                 counter lives inside stat_core's calc path); skipping, this trigger will never \
+                 fire",
+                ev.skill_id, cond.trigger_skill
+            );
+        }
     }
 
     // The billing rule (spec §3.2): free hits (triggered sub-casts, chain re-strikes) resolve
@@ -187,7 +222,7 @@ pub fn on_hit_confirmed(
             skill.clone()
         };
         if !timeline_targets.is_empty() {
-            c.conditions = packet_conditions.clone();
+            c.conditions = packet_conditions;
         }
         owned_clone_skill = c;
         &owned_clone_skill
@@ -245,6 +280,14 @@ pub fn on_hit_confirmed(
     // `is_killing_blow`) still intact. `execute_skill_timeline` itself enforces
     // `MAX_TRIGGER_DEPTH` (warns + drops at the cap) — not re-checked here, one source of truth.
     for cond in &timeline_targets {
+        // Spec §3.2: `EveryNthHit` is forbidden on timeline-target conditions — the warn loop
+        // above already logged it; here we just make sure it never fires (see
+        // `is_unsupported_timeline_condition`'s doc for why it would otherwise silently never
+        // fire anyway — this `continue` makes the "never executes" contract explicit and
+        // independent of `evaluate_pre`'s hard-coded `false`).
+        if is_unsupported_timeline_condition(cond, &handles) {
+            continue;
+        }
         if eval_condition_obelisk_side(&cond.condition, &outcome) {
             execute_skill_timeline(
                 &mut commands,
@@ -487,6 +530,49 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
             "triggered static_discharge should have dealt additional damage: {} -> {}",
             life_before,
             life_after
+        );
+    }
+
+    /// Spec §3.2: `EveryNthHit` is forbidden on timeline-target conditions. `is_unsupported_
+    /// timeline_condition` must flag it exactly when BOTH hold — a registered timeline for
+    /// `trigger_skill` AND the `EveryNthHit` variant — and must not false-positive on either
+    /// half alone (a non-timeline `EveryNthHit` condition is the ordinary, supported packet
+    /// path; a timeline-target `Always` condition is the ordinary, supported Task 7 path).
+    #[test]
+    fn is_unsupported_timeline_condition_flags_every_nth_hit_on_a_timeline_target_only() {
+        let mut handles = CastTimelineHandles::default();
+        handles
+            .0
+            .insert("explosion".to_string(), Handle::<crate::assets::CastTimeline>::default());
+
+        let timeline_every_nth = SkillCondition {
+            trigger_skill: "explosion".into(),
+            additional: true,
+            condition: TriggerCondition::EveryNthHit { n: 3 },
+        };
+        assert!(
+            is_unsupported_timeline_condition(&timeline_every_nth, &handles),
+            "EveryNthHit on a timeline-target condition must be flagged"
+        );
+
+        let timeline_always = SkillCondition {
+            trigger_skill: "explosion".into(),
+            additional: true,
+            condition: TriggerCondition::Always,
+        };
+        assert!(
+            !is_unsupported_timeline_condition(&timeline_always, &handles),
+            "a timeline-target Always condition is the ordinary supported path"
+        );
+
+        let packet_every_nth = SkillCondition {
+            trigger_skill: "not_a_timeline".into(),
+            additional: true,
+            condition: TriggerCondition::EveryNthHit { n: 3 },
+        };
+        assert!(
+            !is_unsupported_timeline_condition(&packet_every_nth, &handles),
+            "EveryNthHit against a skill with no registered timeline is the ordinary packet path"
         );
     }
 }

@@ -10,7 +10,8 @@ use obelisk_bevy::assets::{
     WindowAnchor, WindowPhase, WindowSpawn,
 };
 use obelisk_bevy::combat::system::{
-    is_invalid_lifecycle_target, is_invalid_timeline_target, partition_conditions,
+    is_invalid_lifecycle_target, is_invalid_timeline_target, is_unsupported_timeline_condition,
+    partition_conditions,
 };
 use obelisk_bevy::prelude::*;
 use obelisk_bevy::testkit::ObeliskTestApp;
@@ -516,6 +517,42 @@ base_damages = [{{ type = "fire", min = 15.0, max = 15.0 }}]
     )
 }
 
+/// The forbidden shape (spec §3.2): identical to `fireball_toml` except the trigger condition is
+/// `every_nth_hit` instead of `always`. `EveryNthHit`'s counter only exists inside stat_core's
+/// inline calc path (`TriggerConditionEval::evaluate_pre` hard-returns `false` for it — "handled
+/// externally") — a timeline-target condition never reaches that path, so this content shape can
+/// never fire the explosion no matter how many times the bolt connects.
+fn fireball_toml_every_nth_hit(bolt_damage: f64) -> String {
+    format!(
+        r#"
+[[skills]]
+id = "fireball"
+name = "Fireball"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+[[skills.conditions]]
+trigger_skill = "fireball_explosion"
+type = "every_nth_hit"
+n = 1
+additional = true
+[skills.damage]
+base_damages = [{{ type = "fire", min = {bolt_damage}, max = {bolt_damage} }}]
+
+[[skills]]
+id = "fireball_explosion"
+name = "Fireball Explosion"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{{ type = "fire", min = 15.0, max = 15.0 }}]
+"#,
+    )
+}
+
 /// The bolt: one `Active` window, a `Linear` projectile aimed at the dummy — a real spatial
 /// travel + contact, exactly like `end_events.rs`'s bolt (Task 7's trigger is a rules-level
 /// `SkillCondition`, not a spatial chain).
@@ -599,9 +636,19 @@ fn fireball_explosion_timeline() -> CastTimeline {
 /// `end_events.rs::setup`'s hurtbox wiring so the bolt (and later the explosion) can actually
 /// register a hit against the dummy.
 fn harness_with_fireball_pair(seed: u64, bolt_damage: f64) -> (ObeliskTestApp, Entity, Entity) {
+    harness_with_fireball_pair_from_toml(seed, &fireball_toml(bolt_damage))
+}
+
+/// Same rig as `harness_with_fireball_pair`, but takes the skills TOML directly — lets a caller
+/// swap `fireball`'s condition (e.g. to `every_nth_hit`, spec §3.2's forbidden-on-timeline-target
+/// case) while reusing the same bolt/explosion timelines and player/dummy wiring.
+fn harness_with_fireball_pair_from_toml(
+    seed: u64,
+    skills_toml: &str,
+) -> (ObeliskTestApp, Entity, Entity) {
     let mut t = ObeliskTestApp::new(seed);
 
-    let skills = stat_core::config::parse_skills(&fireball_toml(bolt_damage)).unwrap();
+    let skills = stat_core::config::parse_skills(skills_toml).unwrap();
     t.app
         .world_mut()
         .resource_mut::<SkillRegistry>()
@@ -712,6 +759,60 @@ fn zero_damage_carrier_still_triggers() {
             .iter()
             .map(|d| d.skill_id.as_str())
             .collect::<Vec<_>>()
+    );
+}
+
+/// Spec §3.2: `EveryNthHit` is forbidden on timeline-target conditions. A fireball-like fixture
+/// whose trigger is `every_nth_hit` (instead of `always`) at the timeline-target
+/// `fireball_explosion` must NEVER fire the explosion, no matter how many bolts connect — and
+/// must never panic. `is_unsupported_timeline_condition` (the guard added for this fix) flags the
+/// condition; `on_hit_confirmed` warns and skips it (see that test's log output for the warn
+/// path — this test asserts the behavioral contract: no explosion, ever, across several casts).
+#[test]
+fn every_nth_hit_on_timeline_target_never_fires_the_explosion() {
+    let (mut t, player, _dummy) =
+        harness_with_fireball_pair_from_toml(23, &fireball_toml_every_nth_hit(20.0));
+
+    // The condition guard is exercised directly too (belt-and-suspenders with the behavioral
+    // assertion below): the fixture's condition really is flagged unsupported against the
+    // harness's real, populated CastTimelineHandles.
+    let handles = t.app.world().resource::<CastTimelineHandles>();
+    let cond = SkillCondition {
+        trigger_skill: "fireball_explosion".into(),
+        additional: true,
+        condition: TriggerCondition::EveryNthHit { n: 1 },
+    };
+    assert!(
+        is_unsupported_timeline_condition(&cond, handles),
+        "the fixture's condition must be flagged unsupported"
+    );
+
+    // Several casts (well past any plausible "Nth" count) — the explosion must never fire.
+    for _ in 0..5 {
+        t.app
+            .world_mut()
+            .commands()
+            .entity(player)
+            .cast_skill_dir("fireball", Dir3::Z);
+        t.advance_ticks(90);
+    }
+
+    let rec = t.rec();
+    assert!(
+        rec.damage_resolved
+            .iter()
+            .all(|d| d.skill_id != "fireball_explosion"),
+        "EveryNthHit on a timeline-target condition must never fire the explosion, got {:?}",
+        rec.damage_resolved
+            .iter()
+            .map(|d| d.skill_id.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        rec.damage_resolved
+            .iter()
+            .any(|d| d.skill_id == "fireball"),
+        "the carrier bolt itself must still resolve normally"
     );
 }
 
