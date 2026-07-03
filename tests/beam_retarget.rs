@@ -265,6 +265,162 @@ fn charge_scales_every_strike_in_the_chain() {
     }
 }
 
+// -------------------------------------------------------------------------------------------
+// Final review, item 3: chain x hit-trigger composition. By code reading, a `can_chain` beam
+// whose skill ALSO has an `always -> <explosion>` hit-phase condition explodes PER HOP — each
+// hop's `HitConfirmed` (`end_hitboxes`' chain-hop arm, spec D5) re-enters `on_hit_confirmed` at
+// its own hop count, and the observer's `partition_conditions`/timeline-target execution
+// (Task 7) doesn't care whether the hit came from a scheduled window or a chain re-strike. No
+// prior test pinned this — this one does, self-contained (skills registered programmatically,
+// no fixture file changes, so it can't perturb the golden skill/timeline set).
+// -------------------------------------------------------------------------------------------
+
+/// `chain_zap` (`can_chain = true`, `chain_count = 3`, `always -> chain_zap_explosion`,
+/// `mana_cost = 5.0`) + `chain_zap_explosion` (`mana_cost = 5.0` — nonzero on purpose: a
+/// nonzero cost that still bills `mana_spent == 0.0` in play is the proof the sub-cast took the
+/// depth>0 FREE billing path, not a paid one).
+fn chain_with_explosion_toml() -> &'static str {
+    r#"
+[[skills]]
+id = "chain_zap"
+name = "Chain Zap"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+[[skills.conditions]]
+trigger_skill = "chain_zap_explosion"
+type = "always"
+additional = true
+[skills.damage]
+base_damages = [{ type = "lightning", min = 20.0, max = 20.0 }]
+can_chain = true
+chain_count = 3
+
+[[skills]]
+id = "chain_zap_explosion"
+name = "Chain Zap Explosion"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+[skills.damage]
+base_damages = [{ type = "lightning", min = 5.0, max = 5.0 }]
+"#
+}
+
+/// The explosion's own timeline: one offset-0 `Active` `Static` sphere anchored `CastPoint`
+/// (resolves at the triggering hit's position — each hop's own victim). Radius 0.2 keeps
+/// radius-sum-vs-gap (0.2 explosion + 0.6 hurtbox = 0.8) under the dummies' TIGHTEST spacing
+/// (`setup`'s `zs`: T0-T1 is exactly 1.0), so each hop's explosion can only ever reach ITS OWN
+/// victim, never a neighboring one — keeps the hop-count == explosion-count assertion exact.
+fn chain_zap_explosion_timeline() -> CastTimeline {
+    CastTimeline {
+        skill_id: "chain_zap_explosion".into(),
+        phase_durations: PhaseDurations {
+            windup: 0.0,
+            active: 1.0,
+            recovery: 0.0,
+        },
+        collision_windows: vec![CollisionWindow {
+            id: "blast".into(),
+            spawn: WindowSpawn::Scheduled {
+                phase: WindowPhase::Active,
+                offset: 0.0,
+            },
+            anchor: WindowAnchor::CastPoint,
+            anchor_offset: Vec3::ZERO,
+            strikes: true,
+            active_duration: 0.2,
+            shape: CollisionShape::Sphere { radius: 0.2 },
+            motion: VolumeMotion::Static,
+            motion_direction: Default::default(),
+            hit_filter: HitFilter::Enemies,
+            hit_mode: HitMode::OncePerTarget,
+            rehit_interval: None,
+            emitter: None,
+        }],
+        acquisition: Default::default(),
+        vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
+    }
+}
+
+/// Like `setup`, but also registers `chain_zap`/`chain_zap_explosion` in `SkillRegistry`
+/// (programmatically — no fixture file changes) and both their timelines.
+fn setup_chain_with_explosion(seed: u64) -> (ObeliskTestApp, Entity, Vec<Entity>) {
+    let (mut t, caster, dummies) = setup(seed, "chain_zap");
+
+    let skills = stat_core::config::parse_skills(chain_with_explosion_toml()).unwrap();
+    t.app
+        .world_mut()
+        .resource_mut::<SkillRegistry>()
+        .0
+        .extend(skills);
+
+    let blast_handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .add(chain_zap_explosion_timeline());
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("chain_zap_explosion".into(), blast_handle);
+    t.app.update();
+
+    (t, caster, dummies)
+}
+
+#[test]
+fn chain_hops_each_trigger_their_own_hit_phase_explosion() {
+    let (mut t, caster, dummies) = setup_chain_with_explosion(42);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(caster)
+        .cast_skill_at("chain_zap", dummies[0]);
+    t.advance_ticks(60);
+
+    let rec = t.rec();
+    assert!(
+        rec.cast_rejected.is_empty(),
+        "cast must validate: {:?}",
+        rec.cast_rejected.first().map(|r| &r.reason)
+    );
+
+    let hop_strikes = rec
+        .damage_resolved
+        .iter()
+        .filter(|d| d.skill_id == "chain_zap")
+        .count();
+    assert_eq!(hop_strikes, 4, "initial + 3 hops, same as the plain chain test");
+
+    let explosions: Vec<_> = rec
+        .damage_resolved
+        .iter()
+        .filter(|d| d.skill_id == "chain_zap_explosion")
+        .collect();
+    assert_eq!(
+        explosions.len(),
+        hop_strikes,
+        "every hop's own HitConfirmed re-enters the partition and triggers its own explosion \
+         sub-cast — count must match the strike count exactly, got {} strikes vs {} explosions",
+        hop_strikes,
+        explosions.len()
+    );
+    assert!(
+        explosions.iter().all(|d| d.mana_spent == 0.0),
+        "every explosion sub-cast must resolve mana-free (depth > 0), despite a nonzero \
+         mana_cost on chain_zap_explosion — got mana_spent values {:?}",
+        explosions.iter().map(|d| d.mana_spent).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn same_seed_is_deterministic() {
     let run = || {
