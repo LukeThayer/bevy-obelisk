@@ -94,6 +94,7 @@ fn blizzard_timeline() -> CastTimeline {
             fallback: AcqFallback::Then(Box::new(Acquisition::SelfPoint)),
         },
         vfx_cues: HashMap::from([("emit_shard".to_string(), "blizzard_emit_shard".to_string())]),
+        chain_radius: 6.0,
     }
 }
 
@@ -217,6 +218,7 @@ fn firebolt_timeline() -> CastTimeline {
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     }
 }
 

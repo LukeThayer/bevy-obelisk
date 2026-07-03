@@ -2,9 +2,12 @@
 //! DESIGNATED target (the cast's entity aim) with no overlap test. Also pins the LOS
 //! self-block fix: an entity-aimed cast by a caster with its OWN child hurtbox validates.
 //!
-//! Schema v2 (Task 9) deleted the authored `EndReaction::Retarget` hop machinery; the hop
-//! tests below are `#[ignore]`d as Task 12's RED fixtures — Task 12 re-keys hop behavior to
-//! the rules `can_chain`/`chain_count` fields and un-ignores them.
+//! Schema v2 (Task 9) deleted the authored `EndReaction::Retarget` hop machinery; Task 12
+//! re-keys hop behavior to the rules `can_chain`/`chain_count` fields
+//! (`tests/fixtures/skills/chain_bolt.toml`: `can_chain = true, chain_count = 3`). The hop
+//! tests use the dedicated `chain_bolt` skill so they don't perturb the plain `firebolt`
+//! fixture (`can_chain = false`) the other tests in this file — and the golden suite — rely on
+//! staying single-hit.
 #![cfg(feature = "test-support")]
 
 use bevy::prelude::*;
@@ -45,10 +48,10 @@ fn beam_window(id: &str, phase: WindowPhase) -> CollisionWindow {
 }
 
 /// arc (Active, entity-aimed beam). v1 authored `on_end: Retarget("hop")` here; the hop chain
-/// returns as rules `chain_count` in Task 12.
-fn chain_timeline() -> CastTimeline {
+/// now comes from rules `chain_count` on `skill_id` (Task 12).
+fn chain_timeline(skill_id: &str) -> CastTimeline {
     CastTimeline {
-        skill_id: "firebolt".into(),
+        skill_id: skill_id.into(),
         phase_durations: PhaseDurations {
             windup: 0.05,
             active: 0.05,
@@ -60,22 +63,24 @@ fn chain_timeline() -> CastTimeline {
             ("on_window_arc".to_string(), "cl_arc".to_string()),
             ("on_window_hop".to_string(), "cl_hop".to_string()),
         ]),
+        // Layout below spans T0(2)..T4(7.5) with <=1.5 gaps; 6.0 comfortably covers every hop.
+        chain_radius: 6.0,
     }
 }
 
 /// Caster (WITH its own child hurtbox — the LOS self-block regression) + 5 enemies in a line.
-fn setup(seed: u64) -> (ObeliskTestApp, Entity, Vec<Entity>) {
+fn setup(seed: u64, skill_id: &str) -> (ObeliskTestApp, Entity, Vec<Entity>) {
     let mut t = ObeliskTestApp::new(seed);
     let handle = t
         .app
         .world_mut()
         .resource_mut::<Assets<CastTimeline>>()
-        .add(chain_timeline());
+        .add(chain_timeline(skill_id));
     t.app
         .world_mut()
         .resource_mut::<CastTimelineHandles>()
         .0
-        .insert("firebolt".into(), handle);
+        .insert(skill_id.into(), handle);
     let caster = t
         .app
         .world_mut()
@@ -118,14 +123,13 @@ fn setup(seed: u64) -> (ObeliskTestApp, Entity, Vec<Entity>) {
 }
 
 #[test]
-#[ignore = "re-keyed to rules chain_count in Task 12"]
 fn chain_hops_nearest_unvisited_and_stops_at_max_hops() {
-    let (mut t, caster, dummies) = setup(3);
+    let (mut t, caster, dummies) = setup(3, "chain_bolt");
     t.app
         .world_mut()
         .commands()
         .entity(caster)
-        .cast_skill_at("firebolt", dummies[0]);
+        .cast_skill_at("chain_bolt", dummies[0]);
     t.advance_ticks(60);
 
     let rec = t.rec();
@@ -166,12 +170,12 @@ fn chain_hops_nearest_unvisited_and_stops_at_max_hops() {
     assert!((hop1.position.z - 3.0).abs() < 0.5);
 }
 
-/// The two-anchor cue contract, kept GREEN while the hop tests above wait for Task 12: an
-/// entity-aimed beam's `on_window_{id}` cue carries BOTH anchors — from the beam origin
-/// (caster) to its designated victim.
+/// The two-anchor cue contract: an entity-aimed beam's `on_window_{id}` cue carries BOTH
+/// anchors — from the beam origin (caster) to its designated victim. Uses the plain
+/// (non-chaining) `firebolt` fixture so it stays a single strike.
 #[test]
 fn entity_aimed_beam_cue_is_two_point() {
-    let (mut t, caster, dummies) = setup(3);
+    let (mut t, caster, dummies) = setup(3, "firebolt");
     t.app
         .world_mut()
         .commands()
@@ -203,7 +207,7 @@ fn entity_aimed_beam_cue_is_two_point() {
 
 #[test]
 fn direction_aimed_beam_is_a_paid_fizzle() {
-    let (mut t, caster, _dummies) = setup(5);
+    let (mut t, caster, _dummies) = setup(5, "firebolt");
     t.app
         .world_mut()
         .commands()
@@ -230,15 +234,14 @@ fn direction_aimed_beam_is_a_paid_fizzle() {
 }
 
 #[test]
-#[ignore = "re-keyed to rules chain_count in Task 12"]
 fn charge_scales_every_strike_in_the_chain() {
     let total = |charge: Option<u8>| {
-        let (mut t, caster, dummies) = setup(9);
+        let (mut t, caster, dummies) = setup(9, "chain_bolt");
         let mut cmd = t.app.world_mut().commands();
         let mut ent = cmd.entity(caster);
         match charge {
-            Some(c) => ent.cast_skill_at_charged("firebolt", dummies[0], c),
-            None => ent.cast_skill_at("firebolt", dummies[0]),
+            Some(c) => ent.cast_skill_at_charged("chain_bolt", dummies[0], c),
+            None => ent.cast_skill_at("chain_bolt", dummies[0]),
         };
         t.advance_ticks(60);
         t.rec()
@@ -262,7 +265,7 @@ fn charge_scales_every_strike_in_the_chain() {
 #[test]
 fn same_seed_is_deterministic() {
     let run = || {
-        let (mut t, caster, dummies) = setup(0xBEA1);
+        let (mut t, caster, dummies) = setup(0xBEA1, "firebolt");
         t.app
             .world_mut()
             .commands()

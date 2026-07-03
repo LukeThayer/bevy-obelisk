@@ -68,6 +68,7 @@ fn bolt_timeline(bolt_duration: f32) -> CastTimeline {
         collision_windows: vec![bolt],
         acquisition: Default::default(),
         vfx_cues: HashMap::from([("on_end_bolt".to_string(), "firebolt_boom".to_string())]),
+        chain_radius: 6.0,
     }
 }
 
@@ -274,6 +275,7 @@ fn non_striking_windows_never_hit() {
             collision_windows: vec![zone],
             acquisition: Default::default(),
             vfx_cues: HashMap::new(),
+            chain_radius: 6.0,
         };
         let (mut t, player, _dummy) = setup(23, tl);
         t.app

@@ -41,17 +41,16 @@ pub struct Hitbox {
     /// `VolumeMotion::Beam`: this hitbox strikes its designated target directly (no overlap
     /// test — `detect_overlaps` skips it; `resolve_beam_hits` handles it).
     pub is_beam: bool,
-    /// The beam's designated victim: the cast's entity aim for a scheduled beam window (chain
-    /// hops re-key onto this from rules `chain_count` in Task 12). `None` on a beam = nothing
-    /// to strike (the paid fizzle: the window just fuses out).
+    /// The beam's designated victim: the cast's entity aim for a scheduled beam window, or a
+    /// chain hop's found candidate (Task 12, spec D5 — see `end_hitboxes`). `None` on a beam =
+    /// nothing to strike (the paid fizzle: the window just fuses out).
     pub beam_target: Option<Entity>,
-    /// How many chain hops preceded this hitbox (0 = the initial window). Unpopulated since
-    /// schema v2 deleted the authored `Retarget` reaction; Task 12 re-populates it from rules
-    /// `chain_count`.
+    /// How many chain hops preceded this hitbox (0 = the initial window). Populated by
+    /// `end_hitboxes`' chain-hop arm (Task 12) from rules `can_chain`/`chain_count`.
     pub hop: u8,
     /// Entities already struck by EARLIER hitboxes in this chain (this hitbox's own victims
     /// are in `hit_log`). Chain-hop searches exclude `visited ∪ hit_log` so a chain never
-    /// revisits a victim. Unpopulated since schema v2 (see `hop`).
+    /// revisits a victim (Task 12, see `hop`).
     pub visited: Vec<Entity>,
     /// Trigger-generation depth this hitbox was spawned at (0 = a player cast). Copied from
     /// `ChainPayload.depth`.

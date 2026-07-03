@@ -67,6 +67,7 @@ fn blizzard_timeline() -> CastTimeline {
             fallback: AcqFallback::Then(Box::new(Acquisition::SelfPoint)),
         },
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     }
 }
 
@@ -214,6 +215,7 @@ fn hitscan_fizzle_is_a_paid_rejection() {
                 fallback: AcqFallback::Fizzle,
             },
             vfx_cues: HashMap::new(),
+            chain_radius: 6.0,
         });
     t.app
         .world_mut()
@@ -293,6 +295,7 @@ fn cast_point_anchor_in_aim_skill_fails_validation() {
         collision_windows: vec![storm_window()],
         acquisition: Acquisition::Aim, // the default — never produces a point
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     };
     let err = obelisk_bevy::assets::validate_timeline(&tl).unwrap_err();
     assert!(

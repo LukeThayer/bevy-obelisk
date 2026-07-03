@@ -209,6 +209,7 @@ fn two_window_timeline() -> CastTimeline {
         collision_windows: vec![window("a", 0.0), window("b", 0.5)],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     }
 }
 
@@ -396,6 +397,7 @@ fn executor_retries_while_timeline_asset_is_still_loading() {
         collision_windows: vec![window("a", 0.0)],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     };
     let _ = t
         .app
@@ -539,6 +541,7 @@ fn fireball_bolt_timeline() -> CastTimeline {
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     }
 }
 
@@ -575,6 +578,7 @@ fn fireball_explosion_timeline() -> CastTimeline {
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
     }
 }
 

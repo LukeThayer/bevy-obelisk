@@ -26,6 +26,17 @@ pub struct CastTimeline {
     pub acquisition: Acquisition,
     #[serde(default)]
     pub vfx_cues: std::collections::HashMap<String, String>,
+    /// Search radius (world units) a chain hop uses to find its next victim (spec D5, Task 12).
+    /// Consumed only when a struck BEAM hitbox's skill has rules `can_chain = true` and hops
+    /// remain (`hop < chain_count`) — see `end_hitboxes`. A `can_chain` skill with no beam
+    /// windows simply never chains; this field is then dead data, by design (v1 scope: beams
+    /// only). Defaults to 6.0 so every pre-Task-12 timeline round-trips unaffected.
+    #[serde(default = "default_chain_radius")]
+    pub chain_radius: f32,
+}
+
+fn default_chain_radius() -> f32 {
+    6.0
 }
 
 /// Authored aim-acquisition requirement (Task 10, spec §3.2). `validate_casts` checks the
@@ -433,6 +444,7 @@ mod tests {
             collision_windows: wins,
             acquisition: Acquisition::default(),
             vfx_cues: Default::default(),
+            chain_radius: default_chain_radius(),
         }
     }
 
@@ -759,6 +771,25 @@ mod tests {
             format!("{:?}", reparsed.collision_windows[0].shape)
         );
         assert_eq!(parsed.vfx_cues, reparsed.vfx_cues);
+        assert_eq!(parsed.chain_radius, reparsed.chain_radius);
+    }
+
+    /// `chain_radius` (Task 12) is absent from every pre-Task-12 `.cast.ron` fixture; the
+    /// omitted field must default to 6.0 rather than fail `deny_unknown_fields`/missing-field
+    /// parsing.
+    #[test]
+    fn chain_radius_defaults_when_omitted() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/skills/firebolt.cast.ron"
+        ))
+        .expect("read firebolt.cast.ron");
+        assert!(
+            !src.contains("chain_radius"),
+            "fixture must not already author chain_radius for this default-coverage test"
+        );
+        let parsed: CastTimeline = ron::de::from_str(&src).expect("parse without chain_radius");
+        assert_eq!(parsed.chain_radius, 6.0);
     }
 
     #[test]
