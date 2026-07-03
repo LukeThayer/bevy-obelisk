@@ -70,6 +70,9 @@ pub fn detect_overlaps(
                 skill_id: hitbox.skill_id.clone(),
                 window_id: hitbox.window_id.clone(),
                 charge: hitbox.charge,
+                position: hb_tf.translation,
+                depth: hitbox.depth,
+                hop: hitbox.hop,
             });
             let _ = owner_e;
         }
@@ -123,6 +126,9 @@ pub fn resolve_beam_hits(
             skill_id: hitbox.skill_id.clone(),
             window_id: hitbox.window_id.clone(),
             charge: hitbox.charge,
+            position: hb_tf.translation,
+            depth: hitbox.depth,
+            hop: hitbox.hop,
         });
     }
 }

@@ -66,6 +66,12 @@ pub struct HitConfirmed {
     /// Optional per-cast charge forwarded from the originating `Hitbox`, used by the resolve to
     /// scale damage. `None` = uncharged (1.0x).
     pub charge: Option<u8>,
+    /// World position of the hitbox at the moment of the hit (its transform translation).
+    pub position: Vec3,
+    /// Trigger-generation depth this hit's hitbox was spawned at (0 = a player cast).
+    pub depth: u8,
+    /// How many retarget hops preceded the hitbox that landed this hit (0 = the initial window).
+    pub hop: u8,
 }
 
 #[derive(Event, Clone, Debug)]
@@ -165,6 +171,8 @@ pub struct HitboxEnded {
     pub reason: EndReason,
     /// The cast's charge, carried so chained damage/cosmetics keep scaling.
     pub charge: Option<u8>,
+    /// Trigger-generation depth of the hitbox that ended (0 = a player cast).
+    pub depth: u8,
 }
 
 /// HOST-fired trigger: `hitbox` struck world geometry at `position`. Obelisk deliberately

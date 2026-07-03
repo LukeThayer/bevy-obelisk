@@ -274,6 +274,35 @@ fn windows_without_on_end_just_end() {
 }
 
 #[test]
+fn hit_and_end_events_carry_position_and_depth() {
+    // Bolt aimed AT the dummy: a plain, unretargeted, un-triggered cast — depth 0, hop 0 — but
+    // still carries a real world position from the hitbox transform at the moment of the hit.
+    let (mut t, player, dummy) = setup(19, chaining_timeline(2.0));
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir("firebolt", Dir3::Z);
+    t.advance_ticks(120);
+
+    let rec = t.rec();
+    let hit = rec
+        .hit_confirmed
+        .iter()
+        .find(|h| h.target == dummy)
+        .expect("a hit");
+    assert!(hit.position.length() > 0.0, "hit carries the hitbox position");
+    assert_eq!(hit.depth, 0, "a player cast is depth 0");
+    assert_eq!(hit.hop, 0, "a plain cast has no retarget hops");
+    let ended = rec
+        .hitbox_ended
+        .iter()
+        .find(|e| e.window_id == "bolt")
+        .expect("an end");
+    assert_eq!(ended.depth, 0);
+}
+
+#[test]
 fn validation_rejects_bad_chain_graphs() {
     // Unknown target.
     let mut tl = chaining_timeline(0.2);

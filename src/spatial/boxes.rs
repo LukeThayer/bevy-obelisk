@@ -48,6 +48,9 @@ pub struct Hitbox {
     /// are in `hit_log`). Retarget searches exclude `visited ∪ hit_log` so a chain never
     /// revisits a victim.
     pub visited: Vec<Entity>,
+    /// Trigger-generation depth this hitbox was spawned at (0 = a player cast). Copied from
+    /// `ChainPayload.depth`.
+    pub depth: u8,
 }
 
 impl Hitbox {
@@ -110,6 +113,7 @@ mod tests {
             beam_target: None,
             hop: 0,
             visited: Vec::new(),
+            depth: 0,
         }
     }
 

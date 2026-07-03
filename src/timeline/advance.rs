@@ -297,6 +297,8 @@ pub(crate) struct ChainPayload {
     pub beam_target: Option<Entity>,
     pub hop: u8,
     pub visited: Vec<Entity>,
+    /// Trigger-generation depth the spawned `Hitbox` inherits (0 = a player cast).
+    pub depth: u8,
 }
 
 /// Spawn one collision window's `Hitbox` at `origin` facing `dir`, inserting its `Projectile`
@@ -334,6 +336,7 @@ pub(crate) fn spawn_window_hitbox(
             beam_target: payload.beam_target,
             hop: payload.hop,
             visited: payload.visited,
+            depth: payload.depth,
         },
         Transform::from_translation(origin).with_rotation(rot),
     ));
@@ -438,6 +441,7 @@ pub fn end_hitboxes(
                             ChainPayload {
                                 hop: hb.hop,
                                 visited: hb.visited.clone(),
+                                depth: hb.depth,
                                 ..Default::default()
                             },
                         );
@@ -482,6 +486,7 @@ pub fn end_hitboxes(
                                     // The new hitbox's own strike lands in ITS hit_log;
                                     // visited carries everything before it.
                                     visited: struck,
+                                    depth: hb.depth,
                                 },
                             );
                         }
@@ -498,6 +503,7 @@ pub fn end_hitboxes(
             position,
             reason,
             charge: hb.charge,
+            depth: hb.depth,
         });
         commands.entity(e).despawn();
     }

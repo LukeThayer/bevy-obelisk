@@ -261,6 +261,9 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
             skill_id: "discharge_strike".to_string(),
             window_id: "w".to_string(),
             charge: None,
+            position: Vec3::ZERO,
+            depth: 0,
+            hop: 0,
         });
         // Flush queued commands so the observer's `commands.trigger(...)` events (TriggerFired /
         // DamageResolved) actually dispatch and the target's mutated Attributes are applied.
