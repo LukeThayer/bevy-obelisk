@@ -599,8 +599,12 @@ pub fn tick_emitters(
         hb.emit_elapsed += dt;
         while hb.emit_elapsed >= period {
             hb.emit_elapsed -= period;
-            let u1: f32 = spawn_rng.0.gen::<f32>();
-            let u2: f32 = spawn_rng.0.gen::<f32>();
+            // `r#gen` (final review, item 4): `gen` is reserved in edition 2024 and trips
+            // rust-analyzer today; this rand version (0.8) has no `random()` alias for it, so
+            // the raw identifier is the clean rename — same method (`Rng::gen`), same draw
+            // order, zero behavior change (goldens stay byte-identical).
+            let u1: f32 = spawn_rng.0.r#gen::<f32>();
+            let u2: f32 = spawn_rng.0.r#gen::<f32>();
             let r = em.jitter * u1.sqrt();
             let theta = u2 * std::f32::consts::TAU;
             let offset = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());

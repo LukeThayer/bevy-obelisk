@@ -30,6 +30,8 @@ mod tests {
     fn default_is_deterministic_seed_zero() {
         let mut a = SpawnRng::default();
         let mut b = SpawnRng::default();
-        assert_eq!(a.0.gen::<u64>(), b.0.gen::<u64>());
+        // `r#gen` (final review, item 4): `gen` is reserved in edition 2024 / trips
+        // rust-analyzer today — same rename as `timeline/advance.rs`'s emitter jitter draws.
+        assert_eq!(a.0.r#gen::<u64>(), b.0.r#gen::<u64>());
     }
 }
