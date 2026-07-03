@@ -112,6 +112,21 @@ impl Plugin for ObeliskSimPlugin {
             .add_plugins(vfx::ObeliskCuePlugin)
             .add_plugins(loot::ObeliskLootPlugin);
 
+        // Task 11 review hardening: pin `FixedUpdate` (the sim schedule) to the
+        // single-threaded executor. This is a lockstep-deterministic simulation —
+        // every host must reach byte-identical state from the same inputs — and at
+        // this system count/entity scale, intra-set parallelism buys nothing worth
+        // the risk it introduces: Bevy's multithreaded executor is free to interleave
+        // unordered systems' entity spawns/despawns (and therefore entity ID
+        // allocation order) differently run to run, which is a latent source of
+        // divergence the single-threaded executor closes structurally rather than by
+        // convention (i.e. without relying on every future system addition to
+        // remember to order itself correctly). See the `.chain_ignore_deferred()` note
+        // above for the specific, currently-latent race this also protects against.
+        app.edit_schedule(FixedUpdate, |schedule| {
+            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        });
+
         app.configure_sets(
             FixedUpdate,
             (
@@ -132,12 +147,25 @@ impl Plugin for ObeliskSimPlugin {
                     timeline::advance::advance_casts,
                     // Task 11: ticks every live hitbox's emitter (if any), spawning Template
                     // instances. `tick_emitters` and `end_hitboxes` both mutate `Hitbox` — a
-                    // real query conflict Bevy must serialize — so ONLY this pair is `.chain()`d,
-                    // end BEFORE tick (despawn commands are deferred, so a hitbox reaped this
-                    // tick still gets one last emit chance before it's actually gone next sync
-                    // point). `advance_casts`/`advance_triggered_execs` are deliberately left
-                    // OUTSIDE the chain, unordered relative to the rest exactly as before this
-                    // task — chaining `tick_emitters` BEFORE `end_hitboxes` (the seemingly more
+                    // real query conflict Bevy must serialize — so ONLY this pair is ordered,
+                    // end BEFORE tick. Deliberately `.chain_ignore_deferred()`, NOT `.chain()`:
+                    // plain `.chain()` auto-inserts an `ApplyDeferred` sync point between the
+                    // two systems, and that sync point doesn't just apply `end_hitboxes`' own
+                    // despawn commands — it flushes the command buffers of EVERY completed
+                    // system in this `Advance` set, including the unordered `advance_casts` and
+                    // `advance_triggered_execs`. Whether their freshly-spawned hitboxes become
+                    // visible to `tick_emitters` this tick or next would then depend on thread
+                    // scheduling — run-to-run nondeterminism in a lockstep sim. Ordering with
+                    // deferred effects ignored keeps `end_hitboxes` running before
+                    // `tick_emitters` for the `&mut Hitbox` conflict, with NO sync point
+                    // inserted, so no mid-`Advance` flush occurs at all: with `end_hitboxes`
+                    // running first but its despawn `Commands` not yet applied, a hitbox reaped
+                    // THIS tick is still present (not-yet-despawned) when `tick_emitters` runs
+                    // right after it, so it DOES get one last emit chance before the despawn
+                    // actually lands at the end-of-`Advance` sync point.
+                    // `advance_casts`/`advance_triggered_execs` are deliberately left OUTSIDE
+                    // this ordering, unordered relative to the rest exactly as before this task
+                    // — chaining `tick_emitters` BEFORE `end_hitboxes` (the seemingly more
                     // "natural" reading order) instead reordered `end_hitboxes` relative to
                     // `advance_casts`/the ResolveHits set's sync boundary and perturbed
                     // `everytick_hitbox`'s golden (its `EveryTick` hitbox's fuse-out tick lost its
@@ -148,7 +176,7 @@ impl Plugin for ObeliskSimPlugin {
                         timeline::advance::end_hitboxes,
                         timeline::advance::tick_emitters,
                     )
-                        .chain(),
+                        .chain_ignore_deferred(),
                     timeline::triggered::advance_triggered_execs,
                 )
                     .in_set(ObeliskSet::Advance),
