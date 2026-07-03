@@ -1,0 +1,15 @@
+// Chain lightning's delivery (Task 12 machinery, Task 13 golden coverage): a single entity-aimed
+// Beam window. Hop behavior comes entirely from rules `can_chain`/`chain_count`
+// (tests/fixtures/skills/chain_bolt.toml: can_chain = true, chain_count = 3) -- re-keyed off
+// authored data in end_hitboxes, not an authored reaction (schema v2 deleted the old
+// EndReaction::Retarget). Mirrors tests/beam_retarget.rs's chain_timeline().
+(
+  skill_id: "chain_bolt",
+  phase_durations: ( windup: 0.05, active: 0.05, recovery: 0.05 ),
+  collision_windows: [
+    ( id: "arc", spawn: Scheduled( phase: Active, offset: 0.0 ), active_duration: 0.1,
+      shape: Sphere( radius: 0.3 ), motion: Beam,
+      hit_filter: Enemies, hit_mode: FirstOnly ),
+  ],
+  chain_radius: 6.0,
+)

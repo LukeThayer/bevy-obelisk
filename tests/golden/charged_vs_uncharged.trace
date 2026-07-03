@@ -1,0 +1,20 @@
+   2	CastBegan	caster=player skill=fireball dur=0.300
+   7	CastPhase	caster=player skill=fireball Windup->Active
+   7	HitWindow	caster=player skill=fireball window=bolt
+   9	HitConfirmed	caster=player target=uncharged_target skill=fireball
+   9	Damage	caster=player target=uncharged_target skill=fireball dmg=20.000 kill=false life_after=180.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  10	HitWindow	caster=player skill=fireball_explosion window=blast
+  10	HitConfirmed	caster=player target=uncharged_target skill=fireball_explosion
+  10	Damage	caster=player target=uncharged_target skill=fireball_explosion dmg=15.000 kill=false life_after=165.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  13	CastPhase	caster=player skill=fireball Active->Recovery
+  19	CastPhase	caster=player skill=fireball Recovery->Done
+  26	CastBegan	caster=player skill=fireball dur=0.300
+  31	CastPhase	caster=player skill=fireball Windup->Active
+  31	HitWindow	caster=player skill=fireball window=bolt
+  32	HitConfirmed	caster=player target=charged_target skill=fireball
+  32	Damage	caster=player target=charged_target skill=fireball dmg=40.000 kill=false life_after=160.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  33	HitWindow	caster=player skill=fireball_explosion window=blast
+  33	HitConfirmed	caster=player target=charged_target skill=fireball_explosion
+  33	Damage	caster=player target=charged_target skill=fireball_explosion dmg=30.000 kill=false life_after=130.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  37	CastPhase	caster=player skill=fireball Active->Recovery
+  43	CastPhase	caster=player skill=fireball Recovery->Done

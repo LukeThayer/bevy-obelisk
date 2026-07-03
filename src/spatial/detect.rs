@@ -15,6 +15,10 @@ pub fn detect_overlaps(
     spatial: SpatialQuery,
 ) {
     for (mut hitbox, hb_tf) in &mut hitboxes {
+        // `strikes: false` = a carrier volume (schema v2): detection skips it entirely.
+        if !hitbox.strikes {
+            continue;
+        }
         // Beams have no overlap semantics — `resolve_beam_hits` strikes their designated
         // target directly.
         if hitbox.is_beam {
@@ -70,6 +74,10 @@ pub fn detect_overlaps(
                 skill_id: hitbox.skill_id.clone(),
                 window_id: hitbox.window_id.clone(),
                 charge: hitbox.charge,
+                position: hb_tf.translation,
+                depth: hitbox.depth,
+                hop: hitbox.hop,
+                emitted: hitbox.emitted,
             });
             let _ = owner_e;
         }
@@ -77,8 +85,8 @@ pub fn detect_overlaps(
 }
 
 /// Strike each beam hitbox's DESIGNATED target: no overlap test — acquisition already picked
-/// the victim (the cast's entity aim, or a retarget hop). Moves the hitbox onto the victim so
-/// its `HitEntity` end (and the chained retarget search) happens AT the victim, applies the
+/// the victim (the cast's entity aim; rules-driven chain hops re-key onto it in Task 12).
+/// Moves the hitbox onto the victim so its `HitEntity` end happens AT the victim, applies the
 /// faction filter, registers the hit (`FirstOnly` → done → `end_hitboxes` ends it next tick),
 /// and emits the same `HitConfirmed` the overlap path does. A beam whose target is gone (died
 /// mid-chain) or was never designated (direction-aimed cast: the paid fizzle) strikes nothing
@@ -90,7 +98,8 @@ pub fn resolve_beam_hits(
     factions: Query<&Faction>,
 ) {
     for (mut hitbox, mut hb_tf) in &mut hitboxes {
-        if !hitbox.is_beam || hitbox.done {
+        // A non-striking beam is a carrier too (same v2 rule `detect_overlaps` applies).
+        if !hitbox.strikes || !hitbox.is_beam || hitbox.done {
             continue;
         }
         let Some(target) = hitbox.beam_target else {
@@ -123,6 +132,10 @@ pub fn resolve_beam_hits(
             skill_id: hitbox.skill_id.clone(),
             window_id: hitbox.window_id.clone(),
             charge: hitbox.charge,
+            position: hb_tf.translation,
+            depth: hitbox.depth,
+            hop: hitbox.hop,
+            emitted: hitbox.emitted,
         });
     }
 }

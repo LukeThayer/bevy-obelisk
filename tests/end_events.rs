@@ -1,16 +1,20 @@
-//! Increment 1 — window end events + chaining (spec: 2026-07-02-event-driven-skill-phases.md).
+//! Window END EVENTS (spec: 2026-07-02-event-driven-skill-phases.md, schema v2 per Task 9).
 //!
 //! Every hitbox ends exactly once with a reason (`HitEntity` / `HitWorld` / `Fuse`) and a world
-//! position; the window's authored `on_end` reaction chains the next window AT that position,
-//! carrying the original caster + charge. These tests drive the REAL sim (`ObeliskTestApp`,
-//! seeded RNG, avian spatial) end to end for each reason, plus the `on_end_{id}` cue and the
-//! loader validation rules.
+//! position, and the `on_end_{id}` cue fires AT that position. These tests drive the REAL sim
+//! (`ObeliskTestApp`, seeded RNG, avian spatial) end to end for each reason, plus the schema-v2
+//! `strikes: false` carrier-volume gate.
+//!
+//! The v1 `on_end: Chain` SPAWNING tests that used to live here are deleted with the authored
+//! reaction schema: end-driven causality now runs through rules triggers, covered by
+//! `tests/triggered_exec.rs` (Task 7 hit-phase execution; Task 8 OnImpact/OnExpire lifecycle
+//! execution at the end position).
 #![cfg(feature = "test-support")]
 
 use bevy::prelude::*;
 use obelisk_bevy::assets::{
-    validate_timeline, CastDelivery, CastTargeting, CollisionShape, CollisionWindow, EndReaction,
-    HitFilter, HitMode, OnEnd, PhaseDurations, VolumeMotion, WindowPhase,
+    CollisionShape, CollisionWindow, HitFilter, HitMode, PhaseDurations, VolumeMotion,
+    WindowAnchor, WindowPhase, WindowSpawn,
 };
 use obelisk_bevy::events::{EndReason, HitboxWorldHit};
 use obelisk_bevy::prelude::*;
@@ -30,40 +34,30 @@ fn make_block(id: &str, life: f64, mana: f64) -> StatBlock {
 fn window(id: &str, phase: WindowPhase, motion: VolumeMotion, duration: f32) -> CollisionWindow {
     CollisionWindow {
         id: id.into(),
-        spawn_phase: phase,
-        spawn_offset: 0.0,
+        spawn: WindowSpawn::Scheduled { phase, offset: 0.0 },
+        anchor: WindowAnchor::Caster,
+        anchor_offset: Vec3::ZERO,
+        strikes: true,
         active_duration: duration,
         shape: CollisionShape::Sphere { radius: 0.5 },
         motion,
+        motion_direction: Default::default(),
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::FirstOnly,
         rehit_interval: None,
-        on_end: OnEnd::default(),
+        emitter: None,
     }
 }
 
-/// bolt (Linear 10 u/s, fuse `bolt_duration`) --on_end(all three reasons)--> blast
-/// (Chained sphere 1.5, instant-ish). Registered under the fixture skill id "firebolt".
-fn chaining_timeline(bolt_duration: f32) -> CastTimeline {
-    let mut bolt = window(
+/// One bolt window (Linear 10 u/s, fuse `bolt_duration`), with an `on_end_bolt` cue authored.
+/// Registered under the fixture skill id "firebolt".
+fn bolt_timeline(bolt_duration: f32) -> CastTimeline {
+    let bolt = window(
         "bolt",
         WindowPhase::Active,
         VolumeMotion::Linear { speed: 10.0 },
         bolt_duration,
     );
-    bolt.on_end = OnEnd {
-        hit: Some(EndReaction::Chain("blast".into())),
-        world: Some(EndReaction::Chain("blast".into())),
-        fuse: Some(EndReaction::Chain("blast".into())),
-    };
-    let mut blast = window(
-        "blast",
-        WindowPhase::Chained,
-        VolumeMotion::Static,
-        0.05,
-    );
-    blast.shape = CollisionShape::Sphere { radius: 1.5 };
-    blast.hit_mode = HitMode::OncePerTarget;
     CastTimeline {
         skill_id: "firebolt".into(),
         phase_durations: PhaseDurations {
@@ -71,10 +65,13 @@ fn chaining_timeline(bolt_duration: f32) -> CastTimeline {
             active: 0.05,
             recovery: 0.05,
         },
-        collision_windows: vec![bolt, blast],
-        targeting: CastTargeting::SingleEntity { range: 15.0 },
-        delivery: CastDelivery::Projectile { speed: 10.0 },
+        collision_windows: vec![bolt],
+        acquisition: Default::default(),
         vfx_cues: HashMap::from([("on_end_bolt".to_string(), "firebolt_boom".to_string())]),
+        chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 
@@ -121,10 +118,10 @@ fn setup(seed: u64, tl: CastTimeline) -> (ObeliskTestApp, Entity, Entity) {
 }
 
 #[test]
-fn fuse_end_fires_event_and_chains_at_the_fuse_position() {
+fn fuse_end_fires_event_and_cue_at_the_fuse_position() {
     // Bolt aimed AWAY from the dummy (+X): nothing to hit, the 0.2 s fuse ends it mid-air at
-    // x ≈ 2.0, and the chained blast spawns THERE (far from the dummy → no damage).
-    let (mut t, player, _dummy) = setup(7, chaining_timeline(0.2));
+    // x ≈ 2.0 — the event and the on_end_bolt cue both carry THAT position.
+    let (mut t, player, _dummy) = setup(7, bolt_timeline(0.2));
     t.app
         .world_mut()
         .commands()
@@ -145,15 +142,6 @@ fn fuse_end_fires_event_and_chains_at_the_fuse_position() {
         "fuse position ~10 u/s * 0.2 s: {:?}",
         ended[0].position
     );
-    assert!(
-        rec.hit_window_opened.iter().any(|w| w.window_id == "blast"),
-        "fuse chains the blast"
-    );
-    // The blast itself then fuse-ends (no reaction authored on it).
-    assert!(rec
-        .hitbox_ended
-        .iter()
-        .any(|e| e.window_id == "blast" && e.reason == EndReason::Fuse));
     // The on_end_bolt cue fired AT the fuse position with the OnEnd kind.
     let cue = rec
         .cues
@@ -162,14 +150,13 @@ fn fuse_end_fires_event_and_chains_at_the_fuse_position() {
         .expect("on_end_bolt cue fires");
     assert_eq!(cue.kind, CueKind::OnEnd);
     assert!((cue.position.x - 2.0).abs() < 0.25);
-    assert!(rec.damage_resolved.is_empty(), "nothing was near the blast");
+    assert!(rec.damage_resolved.is_empty(), "the bolt hit nothing");
 }
 
 #[test]
-fn entity_hit_end_chains_the_blast_onto_the_victim() {
-    // Bolt aimed AT the dummy (z = 2): FirstOnly hit ends it, the blast spawns at the impact
-    // and (radius 1.5) hits the dummy too → bolt damage + blast damage.
-    let (mut t, player, dummy) = setup(11, chaining_timeline(2.0));
+fn entity_hit_end_carries_the_contact_position() {
+    // Bolt aimed AT the dummy (z = 2): FirstOnly hit ends it at the contact point.
+    let (mut t, player, dummy) = setup(11, bolt_timeline(2.0));
     t.app
         .world_mut()
         .commands()
@@ -186,7 +173,7 @@ fn entity_hit_end_chains_the_blast_onto_the_victim() {
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0].reason, EndReason::HitEntity);
     // The bolt ends at first CONTACT: its sphere (r 0.5) meets the hurtbox (r 0.6) at
-    // z ≈ 2.0 − 1.1 — the impact surface, which is exactly where the explosion belongs.
+    // z ≈ 2.0 − 1.1 — the impact surface, exactly where a triggered explosion would belong.
     assert!(
         ended[0].position.z > 0.8 && ended[0].position.z < 2.0,
         "ends at the contact point short of the victim center: {:?}",
@@ -195,26 +182,20 @@ fn entity_hit_end_chains_the_blast_onto_the_victim() {
     let bolt_hits = rec
         .hit_confirmed
         .iter()
-        .filter(|h| h.window_id == "bolt")
-        .count();
-    let blast_hits = rec
-        .hit_confirmed
-        .iter()
-        .filter(|h| h.window_id == "blast" && h.target == dummy)
+        .filter(|h| h.window_id == "bolt" && h.target == dummy)
         .count();
     assert_eq!(bolt_hits, 1, "FirstOnly bolt hits once");
-    assert_eq!(blast_hits, 1, "chained blast splashes the victim");
-    assert_eq!(rec.damage_resolved.len(), 2, "direct hit + splash resolve");
+    assert_eq!(rec.damage_resolved.len(), 1, "the direct hit resolves");
     assert!(
         rec.damage_resolved.iter().all(|d| d.caster == player),
-        "chained damage keeps the original caster attribution"
+        "damage keeps the caster attribution"
     );
 }
 
 #[test]
 fn host_world_hit_ends_with_hit_world_at_the_impact_point() {
     // Long fuse, aimed away; the HOST reports a world impact (what arena's floor plane does).
-    let (mut t, player, _dummy) = setup(13, chaining_timeline(5.0));
+    let (mut t, player, _dummy) = setup(13, bolt_timeline(5.0));
     t.app
         .world_mut()
         .commands()
@@ -243,55 +224,92 @@ fn host_world_hit_ends_with_hit_world_at_the_impact_point() {
         .expect("bolt ended");
     assert_eq!(ended.reason, EndReason::HitWorld);
     assert_eq!(ended.position, impact, "ends at the host-reported point");
-    assert!(
-        rec.hit_window_opened.iter().any(|w| w.window_id == "blast"),
-        "world impact chains the blast there"
-    );
 }
 
 #[test]
-fn windows_without_on_end_just_end() {
-    let mut tl = chaining_timeline(0.2);
-    tl.collision_windows[0].on_end = OnEnd::default();
-    tl.collision_windows.truncate(1);
-    let (mut t, player, _dummy) = setup(17, tl);
+fn hit_and_end_events_carry_position_and_depth() {
+    // Bolt aimed AT the dummy: a plain, un-triggered cast — depth 0, hop 0 — but still carries
+    // a real world position from the hitbox transform at the moment of the hit.
+    let (mut t, player, dummy) = setup(19, bolt_timeline(2.0));
     t.app
         .world_mut()
         .commands()
         .entity(player)
-        .cast_skill_dir("firebolt", Dir3::X);
-    t.advance_ticks(60);
+        .cast_skill_dir("firebolt", Dir3::Z);
+    t.advance_ticks(120);
 
     let rec = t.rec();
-    assert!(rec
+    let hit = rec
+        .hit_confirmed
+        .iter()
+        .find(|h| h.target == dummy)
+        .expect("a hit");
+    assert!(
+        hit.position.length() > 0.0,
+        "hit carries the hitbox position"
+    );
+    assert_eq!(hit.depth, 0, "a player cast is depth 0");
+    assert_eq!(hit.hop, 0, "a plain cast has no chain hops");
+    let ended = rec
         .hitbox_ended
         .iter()
-        .any(|e| e.window_id == "bolt" && e.reason == EndReason::Fuse));
-    assert!(
-        !rec.hit_window_opened.iter().any(|w| w.window_id == "blast"),
-        "no reaction authored, nothing chains"
-    );
+        .find(|e| e.window_id == "bolt")
+        .expect("an end");
+    assert_eq!(ended.depth, 0);
 }
 
+/// Schema v2 `strikes` gate: a `strikes: false` zone sitting ON TOP of a dummy never produces a
+/// `HitConfirmed` (it's a carrier volume — it still opens, ends, and fires events); the same
+/// zone with `strikes: true` hits. Brief Step 1's `non_striking_windows_never_hit`.
 #[test]
-fn validation_rejects_bad_chain_graphs() {
-    // Unknown target.
-    let mut tl = chaining_timeline(0.2);
-    tl.collision_windows[0].on_end.hit = Some(EndReaction::Chain("nope".into()));
-    assert!(validate_timeline(&tl).unwrap_err().contains("unknown"));
+fn non_striking_windows_never_hit() {
+    let run = |strikes: bool| {
+        let mut zone = window("zone", WindowPhase::Active, VolumeMotion::Static, 1.0);
+        zone.shape = CollisionShape::Sphere { radius: 3.0 };
+        zone.hit_mode = HitMode::OncePerTarget;
+        zone.strikes = strikes;
+        let tl = CastTimeline {
+            skill_id: "firebolt".into(),
+            phase_durations: PhaseDurations {
+                windup: 0.05,
+                active: 0.05,
+                recovery: 0.05,
+            },
+            collision_windows: vec![zone],
+            acquisition: Default::default(),
+            vfx_cues: HashMap::new(),
+            chain_radius: 6.0,
+            chargeable: false,
+            max_hold: 1.0,
+            cues: HashMap::new(),
+        };
+        let (mut t, player, _dummy) = setup(23, tl);
+        t.app
+            .world_mut()
+            .commands()
+            .entity(player)
+            .cast_skill_dir("firebolt", Dir3::Z);
+        t.advance_ticks(90); // 1.5 s: past the zone's whole life (0.05 s windup + 1 s fuse)
+        (
+            t.rec().hit_confirmed.len(),
+            t.rec()
+                .hitbox_ended
+                .iter()
+                .filter(|e| e.window_id == "zone")
+                .count(),
+        )
+    };
+    let (hits_striking, ended_striking) = run(true);
+    assert!(
+        hits_striking > 0,
+        "control: the striking zone hits the dummy"
+    );
+    assert_eq!(ended_striking, 1, "control zone still ends once");
 
-    // Target not Chained.
-    let mut tl = chaining_timeline(0.2);
-    tl.collision_windows[1].spawn_phase = WindowPhase::Active;
-    assert!(validate_timeline(&tl)
-        .unwrap_err()
-        .contains("spawn_phase: Chained"));
-
-    // Cycle (blast chains back to itself).
-    let mut tl = chaining_timeline(0.2);
-    tl.collision_windows[1].on_end.fuse = Some(EndReaction::Chain("blast".into()));
-    assert!(validate_timeline(&tl).unwrap_err().contains("cycle"));
-
-    // The good graph passes.
-    assert!(validate_timeline(&chaining_timeline(0.2)).is_ok());
+    let (hits_carrier, ended_carrier) = run(false);
+    assert_eq!(
+        hits_carrier, 0,
+        "a strikes:false zone over a dummy must never confirm a hit"
+    );
+    assert_eq!(ended_carrier, 1, "the carrier zone still ends (fuse) once");
 }

@@ -34,20 +34,38 @@ pub struct Hitbox {
     /// Optional per-cast charge carried from the `ActiveCast`, forwarded to `HitConfirmed` so the
     /// resolve can scale damage. `None` = uncharged (1.0x).
     pub charge: Option<u8>,
+    /// Copied from the window's authored `strikes` flag. `false` = a carrier volume: both hit
+    /// paths (`detect_overlaps` and `resolve_beam_hits`) skip it — it can never produce a
+    /// `HitConfirmed`, but it still moves, ends, and fires its cues/events.
+    pub strikes: bool,
     /// `VolumeMotion::Beam`: this hitbox strikes its designated target directly (no overlap
     /// test — `detect_overlaps` skips it; `resolve_beam_hits` handles it).
     pub is_beam: bool,
-    /// The beam's designated victim: the cast's entity aim for a scheduled beam window, or the
-    /// entity a `Retarget` reaction found. `None` on a beam = nothing to strike (the paid
-    /// fizzle: the window just fuses out).
+    /// The beam's designated victim: the cast's entity aim for a scheduled beam window, or a
+    /// chain hop's found candidate (Task 12, spec D5 — see `end_hitboxes`). `None` on a beam =
+    /// nothing to strike (the paid fizzle: the window just fuses out).
     pub beam_target: Option<Entity>,
-    /// How many retarget hops preceded this hitbox (0 = the initial window). `Retarget`
-    /// reactions stop once `hop >= max_hops` — the bound that makes retarget cycles legal.
+    /// How many chain hops preceded this hitbox (0 = the initial window). Populated by
+    /// `end_hitboxes`' chain-hop arm (Task 12) from rules `can_chain`/`chain_count`.
     pub hop: u8,
     /// Entities already struck by EARLIER hitboxes in this chain (this hitbox's own victims
-    /// are in `hit_log`). Retarget searches exclude `visited ∪ hit_log` so a chain never
-    /// revisits a victim.
+    /// are in `hit_log`). Chain-hop searches exclude `visited ∪ hit_log` so a chain never
+    /// revisits a victim (Task 12, see `hop`).
     pub visited: Vec<Entity>,
+    /// Trigger-generation depth this hitbox was spawned at (0 = a player cast). Copied from
+    /// `ChainPayload.depth`.
+    pub depth: u8,
+    /// Seconds accumulated toward this hitbox's next emitter spawn boundary (Task 11, spec
+    /// §3.2) — only meaningful when this window authors an `Emitter`; otherwise always `0.0`
+    /// and untouched by `tick_emitters`. Lives on the hitbox (not a side table) so it needs no
+    /// extra bookkeeping when the hitbox despawns.
+    pub emit_elapsed: f32,
+    /// `true` when this hitbox was spawned BY an emitter (Task 11) rather than the phase
+    /// schedule or a triggered execution. Extends `is_free_hit`
+    /// (`src/combat/system.rs`) so an emitted shard's hits never bill mana, and routes its
+    /// `HitWindowOpened` to the `emit_{window_id}` cue instead of `on_window_{window_id}`
+    /// (`src/vfx.rs::cue_on_window`).
+    pub emitted: bool,
 }
 
 impl Hitbox {
@@ -106,10 +124,14 @@ mod tests {
             hit_log: HashMap::new(),
             done: false,
             charge: None,
+            strikes: true,
             is_beam: false,
             beam_target: None,
             hop: 0,
             visited: Vec::new(),
+            depth: 0,
+            emit_elapsed: 0.0,
+            emitted: false,
         }
     }
 

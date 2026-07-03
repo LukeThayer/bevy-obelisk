@@ -391,6 +391,7 @@ fn run_active_scenario(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     index: Res<ObeliskEntityIndex>,
+    hitboxes: Query<(Entity, &Hitbox)>,
 ) {
     let Some(scenario) = runner.scenario.clone() else {
         return;
@@ -403,18 +404,27 @@ fn run_active_scenario(
 
     let tick = runner.elapsed;
     for step in scenario.script.iter().filter(|s| s.at_tick == tick) {
-        apply_action(&mut commands, &mut meshes, &mut mats, &index, &step.action);
+        apply_action(
+            &mut commands,
+            &mut meshes,
+            &mut mats,
+            &index,
+            &hitboxes,
+            &step.action,
+        );
     }
     runner.elapsed += 1;
 }
 
 /// Apply one scripted action through the public verbs (mirrors `scenario::apply_action`, but via
 /// `Commands` for a live app). Ids are resolved through `ObeliskEntityIndex`.
+#[allow(clippy::too_many_arguments)]
 fn apply_action(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     mats: &mut Assets<StandardMaterial>,
     index: &ObeliskEntityIndex,
+    hitboxes: &Query<(Entity, &Hitbox)>,
     action: &Action,
 ) {
     match action {
@@ -489,6 +499,29 @@ fn apply_action(
                 commands
                     .entity(e)
                     .apply_stat_sources(vec![Box::new(DemoStatSource(stats.clone()))]);
+            }
+        }
+        Action::CastCharged {
+            caster,
+            skill,
+            target,
+            charge,
+        } => {
+            let Some(c) = index.entity(caster) else {
+                return;
+            };
+            if let Some(t) = index.entity(target) {
+                commands
+                    .entity(c)
+                    .cast_skill_at_charged(skill.clone(), t, *charge);
+            }
+        }
+        Action::WorldHit { skill, pos } => {
+            if let Some((hitbox, _)) = hitboxes.iter().find(|(_, hb)| &hb.skill_id == skill) {
+                commands.trigger(HitboxWorldHit {
+                    hitbox,
+                    position: *pos,
+                });
             }
         }
     }

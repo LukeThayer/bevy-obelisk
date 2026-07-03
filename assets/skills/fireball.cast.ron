@@ -1,0 +1,38 @@
+// Task 13 canonical fireball/fireball_explosion pair (carried Task 9 dependency). A chargeable
+// ballistic bolt: Aim acquisition (any resolved aim accepted, no cast point needed -- the bolt
+// travels from the caster). Rules-side (tests/fixtures/skills/fireball.toml) carries the
+// Always/OnImpact/OnExpire conditions that trigger fireball_explosion's own timeline.
+//
+// `cues` (Task 13, spec §3.2/§4) authors bindings naming effects that do not exist anywhere --
+// proves by construction that the sim never reads this map (see
+// src/scenario/library.rs::cue_binding_naming_a_nonexistent_effect_does_not_panic). The two
+// bindings demonstrate the schema's two attachment modes per the spec §3.2 cue table: `on_cast`
+// is world-anchored (World, the only legal option there); `on_window_bolt` follows the bolt's
+// flight (Follow) and is torn down by the window's end event when it hits or expires, with no
+// `on_end_bolt` binding needed.
+(
+  skill_id: "fireball",
+  phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+  collision_windows: [
+    ( id: "bolt", spawn: Scheduled( phase: Active, offset: 0.0 ), active_duration: 0.6,
+      shape: Sphere( radius: 0.5 ), motion: Ballistic( speed: 20.0, gravity: 3.0 ),
+      hit_filter: Enemies, hit_mode: FirstOnly ),
+  ],
+  acquisition: Aim,
+  chargeable: true,
+  max_hold: 1.5,
+  cues: {
+    "on_cast": (
+      effect: Some("fireball_cast_fx_not_yet_authored"),
+      attach: World,
+      anim: None,
+      params: [],
+    ),
+    "on_window_bolt": (
+      effect: Some("fireball_bolt_fx_not_yet_authored"),
+      attach: Follow,
+      anim: None,
+      params: [],
+    ),
+  },
+)

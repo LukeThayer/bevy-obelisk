@@ -1,0 +1,21 @@
+id = "dud_bolt"
+name = "Dud Bolt"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+
+# Dedicated fixture for zero_damage_carrier_triggers (src/scenario/library.rs): an otherwise
+# fireball-shaped carrier bolt authored with ZERO base damage. The Always condition is
+# PreCalculation-phase (evaluated against pre-hit snapshots, Task 7) -- it never looks at the
+# damage actually dealt, so a hit that connects but deals no damage must still spatially fire
+# fireball_explosion. A dedicated skill (not the canonical `fireball`, which always deals 20) so
+# the zero-damage claim is genuinely load-bearing, not a coincidence of some other scenario's
+# damage value.
+[[conditions]]
+trigger_skill = "fireball_explosion"
+type = "always"
+additional = true
+
+[damage]
+base_damages = [{ type = "fire", min = 0.0, max = 0.0 }]

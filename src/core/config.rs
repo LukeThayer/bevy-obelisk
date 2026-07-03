@@ -1,9 +1,16 @@
+use crate::core::spawn_rng::SpawnRng;
 use bevy::prelude::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use stat_core::Skill;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// XOR mask deriving `SpawnRng`'s seed from `CombatRng`'s (Task 11, spec §3.2) — an arbitrary,
+/// fixed constant chosen only so the two streams never share a seed (and thus never coincide),
+/// NOT for any cryptographic property. See `SpawnRng`'s doc for why the two streams must stay
+/// independent.
+const SPAWN_RNG_SEED_XOR: u64 = 0x5EED_5EED;
 
 /// Registry of obelisk skills (the REAL Skill type, not DamagePacketGenerator).
 #[derive(Resource, Default)]
@@ -68,6 +75,13 @@ impl ObeliskConfigExt for App {
     }
     fn seed_combat_rng(&mut self, seed: u64) -> &mut Self {
         self.insert_resource(CombatRng(ChaCha8Rng::seed_from_u64(seed)));
+        // Task 11: seed the dedicated emitter-jitter stream ALONGSIDE CombatRng, from a
+        // different derived seed so the two streams never coincide. See `SpawnRng`'s doc — this
+        // is the ONLY place emitter code may ever draw jitter from; combat resolution never
+        // touches this resource.
+        self.insert_resource(SpawnRng(ChaCha8Rng::seed_from_u64(
+            seed ^ SPAWN_RNG_SEED_XOR,
+        )));
         self
     }
 }
@@ -99,6 +113,10 @@ base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
             .0
             .contains_key("firebolt"));
         assert!(app.world().get_resource::<CombatRng>().is_some());
+        assert!(
+            app.world().get_resource::<SpawnRng>().is_some(),
+            "seed_combat_rng must also seed SpawnRng (Task 11)"
+        );
         assert!(stat_core::config::constants_initialized());
     }
 }

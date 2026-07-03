@@ -1,0 +1,16 @@
+   2	CastBegan	caster=player skill=chain_bolt dur=0.150
+   4	CastPhase	caster=player skill=chain_bolt Windup->Active
+   4	HitWindow	caster=player skill=chain_bolt window=arc
+   4	HitConfirmed	caster=player target=t0 skill=chain_bolt
+   4	Damage	caster=player target=t0 skill=chain_bolt dmg=20.000 kill=false life_after=480.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   5	HitWindow	caster=player skill=chain_bolt window=arc
+   5	HitConfirmed	caster=player target=t1 skill=chain_bolt
+   5	Damage	caster=player target=t1 skill=chain_bolt dmg=20.000 kill=false life_after=480.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   6	HitWindow	caster=player skill=chain_bolt window=arc
+   6	HitConfirmed	caster=player target=t2 skill=chain_bolt
+   6	Damage	caster=player target=t2 skill=chain_bolt dmg=20.000 kill=false life_after=480.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   7	CastPhase	caster=player skill=chain_bolt Active->Recovery
+   7	HitWindow	caster=player skill=chain_bolt window=arc
+   7	HitConfirmed	caster=player target=t3 skill=chain_bolt
+   7	Damage	caster=player target=t3 skill=chain_bolt dmg=20.000 kill=false life_after=480.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  10	CastPhase	caster=player skill=chain_bolt Recovery->Done

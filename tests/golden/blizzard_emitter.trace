@@ -1,0 +1,43 @@
+   2	CastBegan	caster=player skill=blizzard dur=0.150
+   4	CastPhase	caster=player skill=blizzard Windup->Active
+   4	HitWindow	caster=player skill=blizzard window=storm
+   7	CastPhase	caster=player skill=blizzard Active->Recovery
+  10	CastPhase	caster=player skill=blizzard Recovery->Done
+  19	HitWindow	caster=player skill=blizzard window=shard
+  19	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+  34	HitWindow	caster=player skill=blizzard window=shard
+  34	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+  49	HitWindow	caster=player skill=blizzard window=shard
+  49	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+  64	HitWindow	caster=player skill=blizzard window=shard
+  64	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+  79	HitWindow	caster=player skill=blizzard window=shard
+  79	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+  89	HitConfirmed	caster=player target=dummy skill=blizzard
+  89	Damage	caster=player target=dummy skill=blizzard dmg=20.000 kill=false life_after=480.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  94	HitWindow	caster=player skill=blizzard window=shard
+  94	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 100	HitConfirmed	caster=player target=dummy skill=blizzard
+ 100	Damage	caster=player target=dummy skill=blizzard dmg=20.000 kill=false life_after=460.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 109	HitWindow	caster=player skill=blizzard window=shard
+ 109	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 117	HitConfirmed	caster=player target=dummy skill=blizzard
+ 117	Damage	caster=player target=dummy skill=blizzard dmg=20.000 kill=false life_after=440.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 124	HitWindow	caster=player skill=blizzard window=shard
+ 124	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 139	HitWindow	caster=player skill=blizzard window=shard
+ 139	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 142	HitConfirmed	caster=player target=dummy skill=blizzard
+ 142	Damage	caster=player target=dummy skill=blizzard dmg=20.000 kill=false life_after=420.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 154	HitWindow	caster=player skill=blizzard window=shard
+ 154	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 160	HitConfirmed	caster=player target=dummy skill=blizzard
+ 160	Damage	caster=player target=dummy skill=blizzard dmg=20.000 kill=false life_after=400.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 169	HitWindow	caster=player skill=blizzard window=shard
+ 169	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 184	HitWindow	caster=player skill=blizzard window=shard
+ 184	Cue	cue=blizzard_emit_shard source=player kind=OnEmit
+ 191	HitConfirmed	caster=player target=dummy skill=blizzard
+ 191	Damage	caster=player target=dummy skill=blizzard dmg=20.000 kill=false life_after=380.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 199	HitWindow	caster=player skill=blizzard window=shard
+ 199	Cue	cue=blizzard_emit_shard source=player kind=OnEmit

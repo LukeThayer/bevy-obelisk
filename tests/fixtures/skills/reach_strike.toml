@@ -1,0 +1,9 @@
+id = "reach_strike"
+name = "Reach Strike"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+
+[damage]
+base_damages = [{ type = "physical", min = 100.0, max = 100.0 }]

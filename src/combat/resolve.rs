@@ -31,6 +31,25 @@ pub struct HitOutcome {
     /// (a distinct `TriggerFired` plus `DamageResolved`), instead of summing them into the primary
     /// `total_damage`. These are NOT effect triggers (`triggered`) and are NEVER re-resolved.
     pub triggered_skill_hits: Vec<TriggeredSkillHit>,
+    /// The primary (non-triggered) `DamagePacket`, cloned AFTER packet construction + charge
+    /// scaling but BEFORE `resolve_damage_with_triggers` consumes it — i.e. pre-mitigation. Obelisk
+    /// post-calc `TriggerCondition`s (e.g. `DamageOverThreshold`) compare against this raw packet,
+    /// not the post-mitigation `total_damage` aggregate above. The primary is the first
+    /// non-`is_triggered` packet in `skill_result.packets` (mirrors the primary/secondary split
+    /// this fn already performs against `CombatResult::is_triggered`, which is itself copied
+    /// straight from `DamagePacket::is_triggered`). Degenerate cases, observational only: if every
+    /// packet this skill produced is itself a triggered secondary, falls back to the first packet;
+    /// if the skill produced no packets at all (a pure self-buff/self-effect skill), falls back to
+    /// an empty placeholder packet (zero damages) rather than fabricating damage.
+    pub primary_packet: stat_core::DamagePacket,
+    /// Snapshot of the attacker, taken at fn entry BEFORE `use_skill_against` mutates it (mana
+    /// spend, self-effects, etc). Obelisk pre-calc `TriggerCondition`s (e.g. `PlayerFullMana`)
+    /// must evaluate against this pre-mutation state, not the post-hit `caster`.
+    pub attacker_before: StatBlock,
+    /// Snapshot of the defender, taken at fn entry BEFORE any resolution mutates it. Obelisk
+    /// pre-calc `TriggerCondition`s (e.g. `TargetLowLife`) must evaluate against this pre-hit
+    /// state, not the post-hit `target`.
+    pub defender_before: StatBlock,
 }
 
 /// A skill-condition-triggered secondary hit, projected straight off the already-resolved
@@ -106,10 +125,17 @@ pub fn resolve_one_hit_charged(
     charge: Option<u8>,
 ) -> Result<HitOutcome, SkillUseError> {
     let source_id = caster.id.clone();
+    // Pre-hit snapshots for obelisk-side TriggerCondition evaluation (Task 5/6): taken here, before
+    // ANYTHING below mutates `caster` or `target`. Purely observational — never read by resolution
+    // math in this fn.
+    let attacker_before = caster.clone();
     // use_skill_against needs &mut caster + &target simultaneously: snapshot the target.
     let target_snapshot = target.clone();
     let mut skill_result =
         caster.use_skill_against(Some(&target_snapshot), skill, registry, source_id, rng)?;
+    // `target_snapshot` was only borrowed above (never mutated) — move it into the outcome snapshot
+    // rather than cloning again.
+    let defender_before = target_snapshot;
 
     // Charge multiplier: a no-op for the default `None` path (packets untouched). Only when a charge
     // is present do we scale the produced packets' damage magnitudes — a stronger bolt — before the
@@ -122,6 +148,17 @@ pub fn resolve_one_hit_charged(
             }
         }
     }
+
+    // Snapshot the primary (pre-mitigation) packet AFTER packet construction + charge scaling but
+    // BEFORE `resolve_damage_with_triggers` consumes it below. See `HitOutcome::primary_packet` doc
+    // for the degenerate-case fallbacks. Observational only — never fed back into resolution math.
+    let primary_packet = skill_result
+        .packets
+        .iter()
+        .find(|p| !p.is_triggered)
+        .or_else(|| skill_result.packets.first())
+        .cloned()
+        .unwrap_or_else(|| stat_core::DamagePacket::new(caster.id.clone(), skill.id.clone()));
 
     // Resolve the produced packets against the live target (deterministic, seeded).
     let tr =
@@ -196,6 +233,9 @@ pub fn resolve_one_hit_charged(
         mana_gained,
         triggered,
         triggered_skill_hits,
+        primary_packet,
+        attacker_before,
+        defender_before,
     })
 }
 
@@ -446,6 +486,178 @@ base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
             (target.current_life - 132.5).abs() < 1e-6,
             "defender should have taken 30 + 37.5 = 67.5 (life 200 -> 132.5), got {}",
             target.current_life
+        );
+    }
+
+    /// Task 4: `HitOutcome` must expose the primary (pre-mitigation) `DamagePacket` plus pre-hit
+    /// attacker/defender snapshots, so a later obelisk-side `TriggerConditionEval` can compare
+    /// pre-calc conditions against pre-mutation state and post-calc conditions (e.g.
+    /// `DamageOverThreshold`) against the raw packet rather than the post-mitigation aggregate.
+    #[test]
+    fn hit_outcome_exposes_packet_and_pre_hit_snapshots() {
+        stat_core::config::ensure_constants_initialized();
+        let registry = firebolt_registry();
+        let skill = registry.get("firebolt").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 50.0;
+        target.current_life = 50.0;
+        let life_before = target.current_life;
+        let mana_before = caster.current_mana;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let outcome =
+            resolve_one_hit_charged(&mut caster, &mut target, skill, &registry, &mut rng, None)
+                .unwrap();
+
+        assert!(
+            outcome
+                .primary_packet
+                .damages
+                .iter()
+                .map(|d| d.amount)
+                .sum::<f64>()
+                > 0.0,
+            "primary_packet must carry the firebolt's raw pre-mitigation damage"
+        );
+        assert_eq!(
+            outcome.defender_before.current_life, life_before,
+            "defender_before snapshot must be PRE-hit, not the post-hit `target`"
+        );
+        assert_eq!(
+            outcome.attacker_before.current_mana, mana_before,
+            "attacker_before snapshot must be PRE-cast, not the post-cast `caster` (mana already spent)"
+        );
+        // Confirm the snapshots are genuinely distinct from the post-hit state (proves they were
+        // taken before mutation, not aliased references to the same data).
+        assert!(target.current_life < outcome.defender_before.current_life);
+        assert!(caster.current_mana < outcome.attacker_before.current_mana);
+    }
+
+    /// Task 4 review finding: `primary_packet`'s "every packet is triggered" fallback
+    /// (`.find(|p| !p.is_triggered).or_else(|| skill_result.packets.first())`). A REPLACING
+    /// condition (`additional = false`, the default) drops the primary packet entirely — every
+    /// packet `calculate_damage_with_triggers` produces for this hit is `is_triggered = true` — so
+    /// `.find` finds nothing and the fallback must pick the first (only) packet rather than
+    /// silently returning an empty one.
+    #[test]
+    fn primary_packet_falls_back_to_first_packet_when_every_packet_is_triggered() {
+        stat_core::config::ensure_constants_initialized();
+        let toml = r#"
+[[skills]]
+id = "replacer"
+name = "Replacer"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
+[[skills.conditions]]
+trigger_skill = "static_discharge"
+type = "always"
+additional = false
+
+[[skills]]
+id = "static_discharge"
+name = "Static Discharge"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
+"#;
+        let registry = stat_core::config::parse_skills(toml).unwrap();
+        let skill = registry.get("replacer").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 200.0;
+        target.current_life = 200.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+
+        assert_eq!(
+            outcome.primary_packet.skill_id, "static_discharge",
+            "additional=false replaces the primary — every produced packet is triggered, so \
+             primary_packet must fall back to the first (only, triggered) packet, got {:?}",
+            outcome.primary_packet
+        );
+        assert!(
+            outcome.primary_packet.total_damage() > 0.0,
+            "the fallback packet must carry the real triggered damage, not a fabricated zero"
+        );
+    }
+
+    /// Task 4 review finding: `primary_packet`'s "zero packets at all" fallback
+    /// (`.unwrap_or_else(|| DamagePacket::new(...))`, an empty placeholder). The only way
+    /// `calculate_damage_with_triggers` produces zero packets for a targeted attack: a REPLACING
+    /// condition (`additional = false`) matches (dropping the primary) but its `trigger_skill`
+    /// isn't in the `registry` passed to resolve, so no triggered packet gets built either —
+    /// simulated here by removing the trigger target from the registry AFTER
+    /// `validate_skill_trigger_references` has already accepted it at parse time (a live
+    /// registry desync, not something `parse_skills` alone could ever produce).
+    #[test]
+    fn primary_packet_falls_back_to_placeholder_when_no_packets_are_produced() {
+        stat_core::config::ensure_constants_initialized();
+        let toml = r#"
+[[skills]]
+id = "ghost_caster"
+name = "Ghost Caster"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
+[[skills.conditions]]
+trigger_skill = "unregistered_ghost"
+type = "always"
+additional = false
+
+[[skills]]
+id = "unregistered_ghost"
+name = "Unregistered Ghost"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
+"#;
+        let mut registry = stat_core::config::parse_skills(toml).unwrap();
+        registry.remove("unregistered_ghost");
+        let skill = registry.get("ghost_caster").unwrap().clone();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 200.0;
+        target.current_life = 200.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, &skill, &registry, &mut rng).unwrap();
+
+        assert_eq!(
+            outcome.primary_packet.skill_id, "ghost_caster",
+            "zero packets produced must fall back to the documented empty placeholder \
+             (source skill's own id), not fabricate damage, got {:?}",
+            outcome.primary_packet
+        );
+        assert_eq!(
+            outcome.primary_packet.total_damage(),
+            0.0,
+            "the placeholder must carry zero damage"
         );
     }
 

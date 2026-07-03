@@ -1,0 +1,18 @@
+// Dedicated fixture for trigger_depth_cap_terminates (src/scenario/library.rs) -- a
+// non-striking, self-fusing carrier window. See tests/fixtures/skills/recursor.toml for the
+// self-triggering OnExpire rules condition.
+(
+  skill_id: "recursor",
+  // windup MUST be > 0: `advance_casts` only spawns a Scheduled window when the cast's elapsed
+  // time CROSSES the window's start time (`prev_elapsed < start && elapsed >= start`) -- a
+  // windup: 0.0 / offset: 0.0 window has start == 0.0 == the cast's own elapsed at tick zero,
+  // so that crossing never happens and the window would never spawn for the player's REAL
+  // initial cast (this landmine doesn't affect triggered re-executions, Task 6's
+  // `advance_triggered_execs` uses a non-strict `elapsed >= start` check).
+  phase_durations: ( windup: 0.05, active: 1.0, recovery: 0.0 ),
+  collision_windows: [
+    ( id: "pulse", spawn: Scheduled( phase: Active, offset: 0.0 ), strikes: false,
+      active_duration: 0.05, shape: Sphere( radius: 0.1 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+)

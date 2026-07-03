@@ -321,12 +321,14 @@ fn poll_cast_assets(
 /// the elapsed tick, then advancing. Once the sim reaches `target_tick`, flip the capture state to
 /// `Render` so `save_image` records that frame. Don't start the script until the cast assets have
 /// loaded (otherwise a tick-1 cast fires before its timeline exists).
+#[allow(clippy::too_many_arguments)]
 fn run_scenario_to_target(
     mut runner: ResMut<ScenarioRunner>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     index: Res<ObeliskEntityIndex>,
+    hitboxes: Query<(Entity, &Hitbox)>,
     pending: Option<Res<PendingCastAssets>>,
     mut scene_controller: ResMut<SceneController>,
 ) {
@@ -348,18 +350,27 @@ fn run_scenario_to_target(
     let tick = runner.elapsed;
     let scenario = runner.scenario.clone();
     for step in scenario.script.iter().filter(|s| s.at_tick == tick) {
-        apply_action(&mut commands, &mut meshes, &mut mats, &index, &step.action);
+        apply_action(
+            &mut commands,
+            &mut meshes,
+            &mut mats,
+            &index,
+            &hitboxes,
+            &step.action,
+        );
     }
     runner.elapsed += 1;
 }
 
 /// Apply one scripted action through the public verbs (mirrors `scenario::apply_action`, but via
 /// `Commands` for a live app). Ids are resolved through `ObeliskEntityIndex`.
+#[allow(clippy::too_many_arguments)]
 fn apply_action(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     mats: &mut Assets<StandardMaterial>,
     index: &ObeliskEntityIndex,
+    hitboxes: &Query<(Entity, &Hitbox)>,
     action: &Action,
 ) {
     match action {
@@ -432,6 +443,29 @@ fn apply_action(
                 commands
                     .entity(e)
                     .apply_stat_sources(vec![Box::new(DemoStatSource(stats.clone()))]);
+            }
+        }
+        Action::CastCharged {
+            caster,
+            skill,
+            target,
+            charge,
+        } => {
+            let Some(c) = index.entity(caster) else {
+                return;
+            };
+            if let Some(t) = index.entity(target) {
+                commands
+                    .entity(c)
+                    .cast_skill_at_charged(skill.clone(), t, *charge);
+            }
+        }
+        Action::WorldHit { skill, pos } => {
+            if let Some((hitbox, _)) = hitboxes.iter().find(|(_, hb)| &hb.skill_id == skill) {
+                commands.trigger(HitboxWorldHit {
+                    hitbox,
+                    position: *pos,
+                });
             }
         }
     }

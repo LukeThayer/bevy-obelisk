@@ -82,23 +82,32 @@ pub fn faction_filter() -> Scenario {
         )
 }
 
-/// Out of range: an enemy 10 units away, cleave range is 3.
-/// Mirrors `tests/spatial_targeting.rs::out_of_range_cast_is_rejected`.
-/// Expect `CastRejected reason=OutOfRange` and no Damage.
+/// Out of range: an enemy 10 units away, `reach_strike`'s acquisition reaches 5.
+/// Mirrors `tests/spatial_targeting.rs::out_of_range_cast_is_rejected` (un-ignored in Task 10).
+/// Schema v2 (Task 9) DELETED the authored `CastTargeting` range gate with the v1 schema; Task 10
+/// restores range gating via authored `Acquisition` — this golden FLIPS from Task 9's whiff
+/// (`CastBegan` + phase events, no damage) back to a clean `CastRejected reason=OutOfRange` (the
+/// PERMITTED golden delta for this task; every other scenario is byte-identical).
+///
+/// Uses `reach_strike` (a `cleave`-shaped melee attack, `assets/skills/reach_strike.cast.ron`)
+/// rather than `cleave` itself: `cleave` is ALSO cast by DIRECTION elsewhere (`cone_cleave`,
+/// `faction_filter`), and `HitscanEntity` acquisition requires an `Entity` aim — gating `cleave`
+/// itself would reject those direction-aimed sweeps too and change their (must-stay-identical)
+/// goldens. `reach_strike` isolates the acquisition demo to its own skill/asset pair.
 pub fn out_of_range() -> Scenario {
     Scenario::new("out_of_range", 7, 30)
         .describe(
-            "A cast at a target beyond the skill's range is rejected (OutOfRange) with no damage.",
+            "A cast at a target beyond the skill's authored acquisition range is rejected (OutOfRange), no damage.",
         )
-        .cast_asset("cleave")
+        .cast_asset("reach_strike")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
-        .with_skill("cleave")
+        .with_skill("reach_strike")
         .actor("far", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 10.0))
         .at(
             1,
             Action::Cast {
                 caster: "player".into(),
-                skill: "cleave".into(),
+                skill: "reach_strike".into(),
                 aim: Aim::Entity("far".into()),
             },
         )
@@ -1216,6 +1225,311 @@ pub fn on_non_crit_trigger() -> Scenario {
         )
 }
 
+// -------------------------------------------------------------------------------------------
+// Task 13 — trigger-reform scenario coverage (spec §3.2/§4): the whole series (Tasks 1-12) gets
+// scenario-level regression coverage through the canonical `fireball`/`fireball_explosion` pair
+// (`assets/skills/fireball.cast.ron` + `.../fireball_explosion.cast.ron`,
+// `tests/fixtures/skills/fireball.toml` + `.../fireball_explosion.toml`) plus a handful of
+// dedicated single-purpose fixtures (`dud_bolt`, `recursor`) and the two machinery skills already
+// shipped by Tasks 11-12 (`blizzard`, `chain_bolt` — their rules tomls already existed; Task 13
+// ships their `.cast.ron` counterparts so a scenario can actually cast them).
+// -------------------------------------------------------------------------------------------
+
+/// Triggered hit explosion (Task 7, "the fireball moment", end to end): `fireball` hits a dummy;
+/// its hit-phase `Always` condition (rules) executes `fireball_explosion`'s OWN timeline at the
+/// hit position — a SEPARATE `DamageResolved` for `fireball_explosion`, with its own
+/// `DamageResolved`/`HitConfirmed` ids distinct from the bolt's. The dummy carries enough life
+/// (200 > 20 + 15) to survive both hits, so the trace records the full sequence cleanly:
+/// `HitConfirmed(fireball)` -> `Damage(fireball)` -> `TriggerFired` is NOT emitted here (Task 7's
+/// timeline-target path executes spatially rather than surfacing a `TriggerFired` — that event is
+/// reserved for the legacy inline-packet trigger path, e.g. `trigger_cascade`) -> `HitWindow
+/// skill=fireball_explosion` -> `HitConfirmed(fireball_explosion)` -> `Damage(fireball_explosion)`.
+pub fn triggered_hit_explosion() -> Scenario {
+    Scenario::new("triggered_hit_explosion", 20, 200)
+        .describe("Fireball hits a dummy; the hit-phase Always condition executes fireball_explosion's OWN timeline at the hit position -- a separate DamageResolved, distinct ids.")
+        .cast_asset("fireball")
+        .cast_asset("fireball_explosion")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("fireball")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "fireball".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Triggered world impact (Task 8, lifecycle `OnImpact`): a `fireball` bolt is cast down an open
+/// lane (a `bystander` sits well off the flight line — bolt radius 0.5 + hurtbox radius 0.6 = 1.1
+/// clearance, the bystander sits at z = 1.5, safely outside it — so the bolt can never HitEntity
+/// it). Mid-flight, a scripted `Action::WorldHit` reports a HOST-detected world impact (mirrors
+/// what a real game's floor plane does — `tests/end_events.rs`'s
+/// `host_world_hit_ends_with_hit_world_at_the_impact_point`), ending the bolt `HitWorld` at the
+/// reported point. The `OnImpact` lifecycle condition fires and executes `fireball_explosion`'s
+/// OWN timeline AT THAT POINT — close enough to the bystander (blast radius 1.5 + hurtbox 0.6 =
+/// 2.1 reach) to land a `Damage(fireball_explosion)` on it, proving the explosion genuinely
+/// executed rather than merely being scheduled.
+pub fn triggered_world_impact() -> Scenario {
+    Scenario::new("triggered_world_impact", 22, 200)
+        .describe("A fireball bolt grounds (host-reported HitboxWorldHit) mid-flight; the OnImpact lifecycle condition executes fireball_explosion's OWN timeline at the impact point.")
+        .cast_asset("fireball")
+        .cast_asset("fireball_explosion")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("fireball")
+        .actor(
+            "bystander",
+            Faction::Enemy,
+            200.0,
+            0.0,
+            Vec3::new(2.0, 0.0, 1.5),
+        )
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "fireball".into(),
+                aim: Aim::Dir(Vec3::X),
+            },
+        )
+        .at(
+            15,
+            Action::WorldHit {
+                skill: "fireball".into(),
+                pos: Vec3::new(2.0, 0.0, 0.0),
+            },
+        )
+}
+
+/// Triggered fuse expiry (Task 8, lifecycle `OnExpire`): a `fireball` bolt is cast down an open
+/// lane with nothing in its path (a `bystander` sits off the flight line, same clearance
+/// reasoning as `triggered_world_impact`) and NO scripted world-hit — it simply flies out its
+/// full `active_duration` (0.6s) and fuses. The `OnExpire` lifecycle condition fires and executes
+/// `fireball_explosion`'s OWN timeline at the fuse-out point, close enough to the bystander to
+/// land a `Damage(fireball_explosion)` on it.
+pub fn triggered_fuse_expiry() -> Scenario {
+    Scenario::new("triggered_fuse_expiry", 23, 200)
+        .describe("A fireball bolt flies out its full active_duration and fuses (no target in its path); the OnExpire lifecycle condition executes fireball_explosion's OWN timeline at the fuse-out point.")
+        .cast_asset("fireball")
+        .cast_asset("fireball_explosion")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("fireball")
+        .actor(
+            "bystander",
+            Faction::Enemy,
+            200.0,
+            0.0,
+            Vec3::new(12.0, 0.0, 1.3),
+        )
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "fireball".into(),
+                aim: Aim::Dir(Vec3::X),
+            },
+        )
+}
+
+/// Trigger depth cap terminates (Task 6, the recursion cap's proof): `recursor` is a
+/// self-triggering skill — its own `OnExpire` condition names itself. Every fuse-out
+/// (`end_hitboxes`) re-executes `recursor`'s timeline one trigger-depth deeper
+/// (`hb.depth.saturating_add(1)`); `execute_skill_timeline` refuses to spawn anything at or past
+/// `MAX_TRIGGER_DEPTH` (8), so the recursion TERMINATES rather than looping forever. The golden
+/// trace is the proof: it ends (a bounded `HitWindow skill=recursor` line count — depths 0..7,
+/// eight windows total — followed by nothing further), not an unbounded/timed-out run.
+pub fn trigger_depth_cap_terminates() -> Scenario {
+    Scenario::new("trigger_depth_cap_terminates", 3, 200)
+        .describe("A self-triggering skill (OnExpire -> itself) recurses one trigger-depth deeper each fuse-out; MAX_TRIGGER_DEPTH (8) terminates it -- a bounded trace, not an infinite loop.")
+        .cast_asset("recursor")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("recursor")
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "recursor".into(),
+                aim: Aim::Dir(Vec3::Z),
+            },
+        )
+}
+
+/// Zero-damage carrier triggers (Task 7 review finding): `dud_bolt` is a fireball-shaped carrier
+/// bolt authored with ZERO base damage, carrying the same `Always` (`additional = true`)
+/// condition naming `fireball_explosion`. The `Always` condition is `PreCalculation`-phase
+/// (evaluated against pre-hit snapshots) — it never looks at the damage actually dealt, so the
+/// hit connects (kill=false, dmg=0.000) AND `fireball_explosion` still executes spatially at the
+/// hit position, landing its OWN (non-zero) damage. A dedicated fixture (not the canonical
+/// `fireball`, which always deals 20) so the zero-damage claim is genuinely load-bearing.
+pub fn zero_damage_carrier_triggers() -> Scenario {
+    Scenario::new("zero_damage_carrier_triggers", 21, 200)
+        .describe("A carrier bolt with ZERO base damage still triggers its explosion: the Always condition is PreCalculation-phase (pre-hit snapshots), so it fires regardless of damage dealt.")
+        .cast_asset("dud_bolt")
+        .cast_asset("fireball_explosion")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("dud_bolt")
+        .actor("dummy", Faction::Enemy, 200.0, 0.0, Vec3::new(0.0, 0.0, 2.0))
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "dud_bolt".into(),
+                aim: Aim::Entity("dummy".into()),
+            },
+        )
+}
+
+/// Chain from rules (Task 12, spec D5): `chain_bolt`'s `arc` window is a `VolumeMotion::Beam`
+/// (schema v2 deleted the authored `EndReaction::Retarget` hop machinery); hop behavior comes
+/// entirely from rules `can_chain = true` / `chain_count = 3`
+/// (`tests/fixtures/skills/chain_bolt.toml`), re-keyed off authored data in `end_hitboxes`, not
+/// an authored reaction. Five enemies in a line (mirrors
+/// `tests/beam_retarget.rs::chain_hops_nearest_unvisited_and_stops_at_max_hops`'s layout): the
+/// chain strikes `t0` (the cast's designated target) then hops to the nearest UNVISITED victim
+/// three times (`t1`, `t2`, `t3`), stopping at `chain_count` with `t4` (in radius of `t3`, but out
+/// of hops) untouched. A SINGLE `CastBegan` covers every hop — chain re-strikes never pass through
+/// cast validation again, so mana is billed exactly once for the whole chain (spec D4 free
+/// sub-hits: `hop > 0` resolves mana-free at the billing site, `src/combat/system.rs::is_free_hit`).
+pub fn chain_from_rules() -> Scenario {
+    let mut s = Scenario::new("chain_from_rules", 3, 90)
+        .describe("Chain lightning delivered by a Beam window, hop behavior driven entirely by rules can_chain/chain_count (not an authored reaction): 3 hops, nearest-unvisited order, mana billed once (a single CastBegan).")
+        .cast_asset("chain_bolt")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("chain_bolt");
+    for (i, z) in [2.0, 3.0, 4.5, 6.0, 7.5].iter().enumerate() {
+        s = s.actor(
+            &format!("t{i}"),
+            Faction::Enemy,
+            500.0,
+            0.0,
+            Vec3::new(0.0, 0.0, *z),
+        );
+    }
+    s.at(
+        1,
+        Action::Cast {
+            caster: "player".into(),
+            skill: "chain_bolt".into(),
+            aim: Aim::Entity("t0".into()),
+        },
+    )
+}
+
+/// Blizzard emitter (Task 11, "blizzard's machinery", end to end): the `storm` window (a
+/// non-striking carrier, `strikes: false`) is cast at a ground point directly over a dummy and
+/// rains falling `shard` `Template`-window instances on a deterministic clock (`SpawnRng`,
+/// jittered within a 2-unit xz disc — NEVER `CombatRng`, so emission never perturbs damage rolls
+/// elsewhere). Each shard falls straight down (`MotionDirection::Down`) and, landing near the
+/// dummy, strikes it. The golden pins the SHAPE of emission through the public event trace: one
+/// `HitWindow skill=blizzard window=storm` (the storm itself never strikes — `strikes: false`
+/// means it's absent from `HitConfirmed`/`Damage`) followed by repeated `HitWindow
+/// window=shard` / `HitConfirmed` / `Damage` lines as shards land and hit — `Trace`'s `HitWindow`
+/// line doesn't carry a position (only caster/skill/window id — see `scenario/trace.rs`), so
+/// per-shard landing coordinates aren't pinned here; determinism of the actual positions is
+/// already unit-covered (`tests/emitters.rs::spawn_rng_is_deterministic_and_isolated_from_
+/// combat_rng`) — this golden is the scenario-level proof that emission reaches a real target
+/// through the full cast pipeline.
+pub fn blizzard_emitter() -> Scenario {
+    Scenario::new("blizzard_emitter", 21, 200)
+        .describe("A storm cloud (Scheduled, non-striking) rains falling shard Template windows on a deterministic clock (SpawnRng jitter); shards hit a dummy standing under the storm.")
+        .cast_asset("blizzard")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("blizzard")
+        .actor(
+            "dummy",
+            Faction::Enemy,
+            500.0,
+            0.0,
+            Vec3::new(3.0, 0.0, 3.0),
+        )
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "blizzard".into(),
+                aim: Aim::Point(Vec3::new(3.0, 0.0, 3.0)),
+            },
+        )
+}
+
+/// Acquisition fallback (Task 10, spec §3.2): `blizzard`'s authored acquisition is `GroundPoint`
+/// falling back to `SelfPoint`. Cast by DIRECTION (`Aim::Dir`, no point aimed at all) rather than
+/// at a ground point: the `GroundPoint` branch's own requirement ("must be `CastAim::Point`") is
+/// unmet, so the `Then(SelfPoint)` fallback resolves the cast point to the CASTER's own position
+/// instead of rejecting — the golden shows a clean `CastBegan` + `HitWindow skill=blizzard
+/// window=storm` (spawned above the caster), NO `CastRejected`, mirroring
+/// `tests/acquisition.rs::ground_point_falls_back_to_self_point` through the full scenario
+/// pipeline.
+pub fn acquisition_fallback() -> Scenario {
+    Scenario::new("acquisition_fallback", 5, 30)
+        .describe("A GroundPoint-acquisition skill cast by DIRECTION (no point aimed) falls back to SelfPoint: the storm spawns above the CASTER rather than being rejected.")
+        .cast_asset("blizzard")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("blizzard")
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "blizzard".into(),
+                aim: Aim::Dir(Vec3::Z),
+            },
+        )
+}
+
+/// Charged vs. uncharged fireball (Task 13, the `chargeable` schema payoff): no equivalent
+/// scenario exists (checked: `crit_strike`/`self_buff_boosts_damage`/`cast_speed_scaling` cover
+/// crit/buff/cast-speed contrasts, but none exercises the `charge: Option<u8>` cast parameter —
+/// `charge_mult`'s existing 0.5x..2.0x scaling was previously only unit-covered, e.g.
+/// `tests/beam_retarget.rs::charge_scales_every_strike_in_the_chain`). `fireball` now legitimately
+/// authors `chargeable: true` (Task 13); this golden is the scenario-level proof that a
+/// `cast_skill_at_charged` cast actually deals more damage than an uncharged one. The player
+/// casts fireball twice — once plain at an `uncharged_target` (tick 1), once at max charge (255,
+/// via the new `Action::CastCharged`) at a SEPARATE `charged_target` on the opposite side (tick
+/// 25, well after the first cast's `Done` phase at ~tick 19, so `AlreadyCasting` never gates it) —
+/// so the two hits (and their triggered `fireball_explosion`s) never spatially interfere. Expect
+/// the charged `Damage(fireball)` line to read visibly higher than the uncharged one.
+pub fn charged_vs_uncharged() -> Scenario {
+    Scenario::new("charged_vs_uncharged", 30, 200)
+        .describe("fireball is chargeable (Task 13 schema): a max-charge (255) cast deals visibly more damage than an uncharged cast against a same-shaped target -- charge_mult's existing 0.5x..2.0x scaling, now authored on a skill that legitimately claims chargeable:true.")
+        .cast_asset("fireball")
+        .cast_asset("fireball_explosion")
+        .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("fireball")
+        .actor(
+            "uncharged_target",
+            Faction::Enemy,
+            200.0,
+            0.0,
+            Vec3::new(0.0, 0.0, 2.0),
+        )
+        .actor(
+            "charged_target",
+            Faction::Enemy,
+            200.0,
+            0.0,
+            Vec3::new(0.0, 0.0, -2.0),
+        )
+        .at(
+            1,
+            Action::Cast {
+                caster: "player".into(),
+                skill: "fireball".into(),
+                aim: Aim::Entity("uncharged_target".into()),
+            },
+        )
+        .at(
+            25,
+            Action::CastCharged {
+                caster: "player".into(),
+                skill: "fireball".into(),
+                target: "charged_target".into(),
+                charge: 255,
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -1292,6 +1606,15 @@ pub fn feature_matrix() -> Vec<Scenario> {
         on_fire_damage_dealt_trigger(),
         on_big_hit_trigger(),
         on_non_crit_trigger(),
+        triggered_hit_explosion(),
+        triggered_world_impact(),
+        triggered_fuse_expiry(),
+        trigger_depth_cap_terminates(),
+        zero_damage_carrier_triggers(),
+        chain_from_rules(),
+        blizzard_emitter(),
+        acquisition_fallback(),
+        charged_vs_uncharged(),
     ]
 }
 
@@ -1575,6 +1898,24 @@ mod tests {
             triggered_skill_hits_for("critzap"),
             0,
             "critzap's on_crit condition does not fire without a crit (the contrast)"
+        );
+    }
+
+    /// Task 13, deliverable 3's required proof: `fireball.cast.ron` authors a `cues` entry
+    /// (`"on_cast"`) naming an effect (`"fireball_cast_fx_not_yet_authored"`) that does not exist
+    /// anywhere in the project — nothing in this crate ever reads `CastTimeline::cues` (it's
+    /// `#[reflect(ignore)]`'d editor/presentation data, distinct from the sim-consumed
+    /// `vfx_cues`), so this is true BY CONSTRUCTION rather than by a runtime guard. This test is
+    /// the end-to-end confirmation: running a real scenario whose timeline carries that binding
+    /// completes cleanly (reaches a `Damage` line) — no panic, no dropped events.
+    #[test]
+    fn cue_binding_naming_a_nonexistent_effect_does_not_panic() {
+        let trace = crate::scenario::run::run_scenario(&super::triggered_hit_explosion());
+        let txt = trace.to_text();
+        assert!(
+            txt.contains("Damage"),
+            "the scenario must complete normally despite fireball.cast.ron's cues map naming a \
+             nonexistent effect (the sim never reads it):\n{txt}"
         );
     }
 }

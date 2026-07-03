@@ -1,0 +1,9 @@
+id = "blizzard"
+name = "Blizzard"
+tags = ["spell", "cold"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+
+[damage]
+base_damages = [{ type = "cold", min = 20.0, max = 20.0 }]

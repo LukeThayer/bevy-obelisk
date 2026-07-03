@@ -1,0 +1,7 @@
+   2	CastBegan	caster=player skill=blizzard dur=0.150
+   4	CastPhase	caster=player skill=blizzard Windup->Active
+   4	HitWindow	caster=player skill=blizzard window=storm
+   7	CastPhase	caster=player skill=blizzard Active->Recovery
+  10	CastPhase	caster=player skill=blizzard Recovery->Done
+  19	HitWindow	caster=player skill=blizzard window=shard
+  19	Cue	cue=blizzard_emit_shard source=player kind=OnEmit

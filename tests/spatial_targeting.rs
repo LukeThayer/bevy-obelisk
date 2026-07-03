@@ -135,10 +135,16 @@ fn cleave_does_not_hit_allies() {
     );
 }
 
+/// `reach_strike` (Task 10 fixture, `assets/skills/reach_strike.cast.ron`) is a `cleave`-shaped
+/// melee attack authored with `HitscanEntity( range: 5.0, ... fallback: Fizzle )` acquisition —
+/// NOT `cleave` itself, which stays acquisition-free (`Aim`, the default) because `cleave` is
+/// ALSO cast by DIRECTION elsewhere (`cone_cleave_hits_multiple_enemies_in_arc_but_not_behind`,
+/// `cleave_does_not_hit_allies`); gating `cleave` with `HitscanEntity` (which requires an
+/// `Entity` aim) would reject those direction-aimed sweeps too.
 #[test]
 fn out_of_range_cast_is_rejected() {
     let mut t = ObeliskTestApp::new(7);
-    load_cast(&mut t, "cleave", "cleave.cast.ron");
+    load_cast(&mut t, "reach_strike", "reach_strike.cast.ron");
     let player = spawn_combatant(&mut t, "player", Faction::Player, Vec3::ZERO, 100.0);
     let far = spawn_combatant(
         &mut t,
@@ -152,7 +158,7 @@ fn out_of_range_cast_is_rejected() {
         .world_mut()
         .commands()
         .entity(player)
-        .cast_skill_at("cleave", far);
+        .cast_skill_at("reach_strike", far);
     t.advance_ticks(10);
     assert!(
         t.rec()

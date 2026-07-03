@@ -1,0 +1,11 @@
+   2	CastBegan	caster=player skill=recursor dur=1.050
+   4	CastPhase	caster=player skill=recursor Windup->Active
+   4	HitWindow	caster=player skill=recursor window=pulse
+  10	HitWindow	caster=player skill=recursor window=pulse
+  16	HitWindow	caster=player skill=recursor window=pulse
+  22	HitWindow	caster=player skill=recursor window=pulse
+  28	HitWindow	caster=player skill=recursor window=pulse
+  34	HitWindow	caster=player skill=recursor window=pulse
+  40	HitWindow	caster=player skill=recursor window=pulse
+  46	HitWindow	caster=player skill=recursor window=pulse
+  65	CastPhase	caster=player skill=recursor Active->Done

@@ -10,6 +10,7 @@ pub use crate::net::NetEvent;
 pub use crate::spatial::boxes::{insert_hurtbox, Hitbox, Hurtbox};
 pub use crate::timeline::cast::{charge_mult, CastAim, CastSkillExt};
 pub use crate::timeline::state::{ActiveCast, SkillPhase};
+pub use crate::timeline::triggered::{execute_skill_timeline, ExecPayload, MAX_TRIGGER_DEPTH};
 pub use crate::verbs::ObeliskCommandsExt;
 pub use crate::vfx::ObeliskCueExt;
 pub use crate::{ObeliskPlugins, ObeliskSet, ObeliskSimPlugin};
