@@ -47,14 +47,33 @@ pub struct CastTimeline {
     pub max_hold: f32,
     /// Presentation cue-binding map (Task 13, spec §3.2/§4): authored `cue key -> CueBinding`
     /// (VFX effect / attach mode / animation / charge-driven params) for the editor and any other
-    /// presentation consumer to resolve `on_cast`/`on_window_*`/`on_hit`/... keys against. Pure
-    /// data — DISTINCT from `vfx_cues` (which the sim's cue-firing systems DO read to name the
-    /// `CueEvent::cue_id` a key fires). Nothing in this crate ever reads `cues`; a binding naming
-    /// an effect/anim that doesn't exist anywhere is therefore inert by construction, never a
-    /// panic (see `cue_binding_naming_a_nonexistent_effect_does_not_panic`,
-    /// `src/scenario/library.rs`). `#[reflect(ignore)]`: sidesteps requiring `Reflect` on the
-    /// whole `CueBinding` tree, same rationale as `acquisition` above. Defaults to empty so every
-    /// pre-Task-13 timeline round-trips unaffected.
+    /// presentation consumer to resolve cue keys against. Pure data — DISTINCT from `vfx_cues`
+    /// (which the sim's cue-firing systems DO read to name the `CueEvent::cue_id` a key fires).
+    ///
+    /// The map's keys are the SIM's runtime cue-slot names — not the spec table's shorthand —
+    /// because this is what `src/vfx.rs`'s cue-firing observers and `src/events.rs::CueEvent`
+    /// actually match against. There are exactly five slot-name patterns, each firing at most
+    /// once per its trigger (`window_id` is a `CollisionWindow::id`):
+    ///   - `on_cast` — the cast begins (`vfx.rs::cue_on_cast`).
+    ///   - `on_window_{window_id}` — a *scheduled* window or chain re-strike spawns
+    ///     (`vfx.rs::cue_on_window`).
+    ///   - `on_hit` — each hit confirm (`vfx.rs::cue_on_hit`).
+    ///   - `on_end_{window_id}` — a window ends (`vfx.rs::cue_on_end`).
+    ///   - `emit_{window_id}` — an emitter instantiates a `Template` window (emitted instances
+    ///     fire this ONLY, never `on_window_{window_id}` — `vfx.rs::cue_on_window`).
+    ///
+    /// These map 1:1 onto the spec's cue table (design doc
+    /// `docs/superpowers/specs/2026-07-02-skill-editor-reimplementation-design.md` §3.2, "Cue
+    /// table") shorthand: `cast` = `on_cast`, `window_open:<id>` = `on_window_{id}`, `hit` =
+    /// `on_hit`, `end:<id>` = `on_end_{id}`, `emit:<id>` = `emit_{id}`. That table is normative
+    /// for which `CueBinding` fields are legal to author on each slot — see `CueBinding`.
+    ///
+    /// Nothing in this crate ever reads `cues`; a binding naming an effect/anim that doesn't
+    /// exist anywhere is therefore inert by construction, never a panic (see
+    /// `cue_binding_naming_a_nonexistent_effect_does_not_panic`, `src/scenario/library.rs`).
+    /// `#[reflect(ignore)]`: sidesteps requiring `Reflect` on the whole `CueBinding` tree, same
+    /// rationale as `acquisition` above. Defaults to empty so every pre-Task-13 timeline
+    /// round-trips unaffected.
     #[serde(default)]
     #[reflect(ignore)]
     pub cues: std::collections::HashMap<String, CueBinding>,
@@ -70,16 +89,36 @@ fn default_max_hold() -> f32 {
 
 /// A presentation binding for one cue key (Task 13, spec §3.2/§4) — what VFX/anim/params the
 /// HOST should play when that cue fires. Entirely inert to the sim; see `CastTimeline::cues`.
+///
+/// The spec's cue table (design doc §3.2, "Cue table") is **normative for each slot's legal
+/// binding options** — quoting it verbatim: "attachment is authorable on `window_open`/`emit`
+/// only; anim on `cast` only." In this crate's slot-name vocabulary (see `CastTimeline::cues`):
+/// `attach` is only meaningful on `on_window_*`/`emit_*` bindings — `on_cast`/`on_hit`/`on_end_*`
+/// effects are world-anchored (fixed position/orientation, no source to follow); `anim` is only
+/// meaningful on `on_cast` bindings. This schema is a **deliberately permissive superset**: the
+/// struct does not reject an `attach`/`anim` authored on the "wrong" slot at parse time —
+/// enforcement of these constraints is editor-side validation (phase 3, `ValidationRegistry`),
+/// not a sim-side concern.
+///
+/// `CueAttach::Follow` means: the host flies a proxy entity along the cue's motion data (the
+/// window's projectile/beam trajectory), and the window's end **event** (`HitboxEnded`, fired
+/// regardless of whether an `on_end_{window_id}` *binding* is authored) snaps the proxy to the
+/// end position and terminates it. A `Follow` binding on `on_window_bolt` therefore needs no
+/// matching `on_end_bolt` binding to clean up after itself.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CueBinding {
     /// Name of a VFX effect/preset to play (editor/host-resolved; not validated here).
     #[serde(default)]
     pub effect: Option<String>,
-    /// Where the effect attaches.
+    /// Where the effect attaches. Normatively authorable on `on_window_*`/`emit_*` slots only
+    /// (see `CueBinding` docs) — `World` is always legal (and is the default), `Follow` is only
+    /// meaningful there. Not enforced by this schema; see `CueBinding` docs.
     #[serde(default)]
     pub attach: CueAttach,
     /// Name of an animation clip to play alongside the effect (editor/host-resolved).
+    /// Normatively authorable on the `on_cast` slot only (see `CueBinding` docs); not enforced
+    /// by this schema.
     #[serde(default)]
     pub anim: Option<String>,
     /// Extra parameters fed to the effect/anim from cast-time data.
@@ -91,9 +130,13 @@ pub struct CueBinding {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CueAttach {
     /// Plays at a fixed world position/orientation (does not track its source afterward).
+    /// Legal on every slot; the only legal option on world-anchored slots (`on_cast`, `on_hit`,
+    /// `on_end_*` — see `CueBinding` docs).
     #[default]
     World,
-    /// Follows its source entity for its lifetime.
+    /// Follows its source entity for its lifetime: the host flies a proxy along the cue's motion
+    /// data, and the window's end event (not the binding) terminates it — see `CueBinding` docs.
+    /// Normatively authorable on `on_window_*`/`emit_*` slots only.
     Follow,
 }
 
