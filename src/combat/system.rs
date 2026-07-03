@@ -7,11 +7,30 @@ use crate::core::config::{CombatRng, SkillRegistry};
 use crate::events::{DamageResolved, EffectApplied, EntityDied, HitConfirmed, TriggerFired};
 use bevy::prelude::*;
 use stat_core::combat::resolve_damage_with_rng;
+use stat_core::Skill;
 
 /// Hard cap on the number of triggered-effect resolutions processed for a single hit.
 /// Bounds any pathological re-entrant cascade (defensive — damage resolution does not itself
 /// produce new triggers, so the worklist cannot actually grow from auto-firing alone).
 const MAX_TRIGGER_RESOLUTIONS: usize = 8;
+
+/// The billing rule (spec §3.2): mana bills per-hit only for the cast's own scheduled windows.
+/// Chain re-strikes (`hop > 0`) and triggered sub-casts (`depth > 0`) never passed through cast
+/// validation, so they must resolve mana-free rather than fizzling (or double-billing) at
+/// `resolve_one_hit_charged`'s `consume_skill_resources` step. (Task 11 extends this with
+/// `|| ev.emitted`.)
+fn is_free_hit(ev: &HitConfirmed) -> bool {
+    ev.depth > 0 || ev.hop > 0
+}
+
+/// A clone of `s` with `mana_cost` zeroed — handed to `resolve_one_hit_charged` for free hits so
+/// `consume_skill_resources` charges nothing (and never fizzles on insufficient mana). Also the
+/// site Task 7's condition stripping will extend — one clone, two edits.
+fn free_clone(s: &Skill) -> Skill {
+    let mut c = s.clone();
+    c.mana_cost = 0.0;
+    c
+}
 
 /// Observer: when a hit is confirmed, run the deterministic resolve funnel and emit results.
 pub fn on_hit_confirmed(
@@ -32,10 +51,21 @@ pub fn on_hit_confirmed(
         Err(_) => return, // same entity or missing
     };
 
+    // The billing rule (spec §3.2): free hits (triggered sub-casts, chain re-strikes) resolve
+    // against a mana-zeroed clone so they never bill or fizzle; the paid (hot) path keeps passing
+    // the registry `&Skill` straight through — no clone.
+    let owned_free_skill;
+    let skill_for_resolve: &Skill = if is_free_hit(&ev) {
+        owned_free_skill = free_clone(skill);
+        &owned_free_skill
+    } else {
+        skill
+    };
+
     let outcome = match resolve_one_hit_charged(
         &mut caster_attrs.0,
         &mut target_attrs.0,
-        skill,
+        skill_for_resolve,
         &registry.0,
         &mut rng.0,
         ev.charge,
