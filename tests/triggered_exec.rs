@@ -11,6 +11,7 @@ use obelisk_bevy::assets::{
 };
 use obelisk_bevy::prelude::*;
 use obelisk_bevy::testkit::ObeliskTestApp;
+use obelisk_bevy::timeline::triggered::TriggeredExec;
 use stat_core::StatBlock;
 use std::collections::HashMap;
 
@@ -317,5 +318,141 @@ fn executor_drops_at_depth_cap_with_warning() {
         hitbox_count_total_seen(&t),
         0,
         "cap drops before any window ever opens"
+    );
+}
+
+/// The single live `TriggeredExec` entity, if any — used to assert the exec survives (or is
+/// despawned) across ticks without depending on the caster entity (which never carries the
+/// component itself).
+fn triggered_exec_entity(t: &mut ObeliskTestApp) -> Option<Entity> {
+    t.app
+        .world_mut()
+        .query::<(Entity, &TriggeredExec)>()
+        .iter(t.app.world())
+        .map(|(e, _)| e)
+        .next()
+}
+
+/// A handle registered in `CastTimelineHandles` (skill id known) whose `CastTimeline` asset has
+/// NOT been inserted into `Assets<CastTimeline>` yet — mirrors the real async-load window between
+/// a trigger firing and the timeline asset streaming in. Returns the harness plus the reserved
+/// handle so the caller can insert the asset later.
+fn harness_with_pending_skill() -> (ObeliskTestApp, Handle<CastTimeline>) {
+    let mut t = ObeliskTestApp::new(5);
+    let handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .reserve_handle();
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("pending_skill".into(), handle.clone());
+    t.app.update();
+    (t, handle)
+}
+
+/// Finding 1 (review): a trigger can fire before its skill's `CastTimeline` asset has streamed
+/// in. The exec must retry (not despawn) while the handle is registered but the asset isn't
+/// loaded yet, and must not tick `elapsed` while pending — once the asset arrives, the offset-0
+/// window must still fire (elapsed didn't secretly run out the clock while waiting).
+#[test]
+fn executor_retries_while_timeline_asset_is_still_loading() {
+    let (mut t, handle) = harness_with_pending_skill();
+    exec_timeline(&mut t, "pending_skill", Vec3::ZERO, 0);
+
+    let exec = triggered_exec_entity(&mut t).expect("TriggeredExec spawned");
+
+    // Several ticks with the asset still unloaded: exec must survive, no windows open.
+    app_step(&mut t, 10);
+    assert!(
+        t.app.world_mut().get_entity(exec).is_ok(),
+        "exec must not despawn while its timeline asset is still loading"
+    );
+    assert_eq!(
+        hitbox_count_total_seen(&t),
+        0,
+        "no window can spawn before the timeline asset resolves"
+    );
+
+    // Now the asset streams in.
+    let tl = CastTimeline {
+        skill_id: "pending_skill".into(),
+        phase_durations: PhaseDurations {
+            windup: 0.0,
+            active: 1.0,
+            recovery: 0.0,
+        },
+        collision_windows: vec![window("a", 0.0)],
+        targeting: CastTargeting::SelfCast,
+        delivery: CastDelivery::Instant,
+        vfx_cues: HashMap::new(),
+    };
+    let _ = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .insert(handle.id(), tl);
+
+    app_step(&mut t, 1);
+    assert_eq!(
+        hitbox_count_total_seen(&t),
+        1,
+        "offset-0 window fires once the asset resolves, elapsed didn't run out while pending"
+    );
+}
+
+/// Finding 1 (review), unknown-skill half: no handle registered at all (not even a pending one)
+/// means the skill id is genuinely unknown — the exec must despawn (give up) rather than retry
+/// forever, and nothing ever spawns.
+#[test]
+fn executor_despawns_on_unknown_skill_id() {
+    let mut t = harness_with_two_window_skill();
+    exec_timeline(&mut t, "no_such_skill", Vec3::ZERO, 0);
+
+    let exec = triggered_exec_entity(&mut t).expect("TriggeredExec spawned");
+
+    app_step(&mut t, 5);
+    assert!(
+        t.app.world_mut().get_entity(exec).is_err(),
+        "an unknown skill id must despawn the exec (no handle ever exists to retry against)"
+    );
+    assert_eq!(
+        hitbox_count_total_seen(&t),
+        0,
+        "an unknown skill must never spawn any window"
+    );
+}
+
+/// Finding 3 (review, minor): a `Chained` window on the executor's timeline must never spawn on
+/// its own schedule (only via a parent window's `on_end`, which this fixture never triggers) —
+/// total spawned count stays pinned to the two `Active` windows.
+#[test]
+fn executor_never_spawns_chained_window_on_its_own_schedule() {
+    let mut t = ObeliskTestApp::new(6);
+    let mut tl = two_window_timeline();
+    let mut chained = window("c", 0.0);
+    chained.spawn_phase = WindowPhase::Chained;
+    tl.collision_windows.push(chained);
+    let handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .add(tl);
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("test_skill".into(), handle);
+    t.app.update();
+
+    exec_timeline(&mut t, "test_skill", Vec3::ZERO, 0);
+    app_step_secs(&mut t, 1.0); // past both A (0.0) and B (0.5) offsets
+
+    assert_eq!(
+        hitbox_count_total_seen(&t),
+        2,
+        "the Chained window never spawns on the phase schedule — only A and B open"
     );
 }

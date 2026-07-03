@@ -77,9 +77,10 @@ pub fn execute_skill_timeline(
 /// Ticks every [`TriggeredExec`]'s virtual clock by the fixed delta and spawns each not-yet-
 /// spawned window whose (unscaled) start time has elapsed, at `payload.position`. `Chained`
 /// windows are never on the schedule (same rule as `advance_casts`) — permanently skipped.
-/// Despawns the exec entity once every window has spawned (or been skipped). If the skill's
-/// timeline can't be resolved (unknown skill id / asset not loaded), the exec is dropped rather
-/// than ticking forever.
+/// Despawns the exec entity once every window has spawned (or been skipped). An unknown skill id
+/// (no handle registered) `warn!`s and drops the exec rather than ticking forever; a registered
+/// handle whose `CastTimeline` asset hasn't streamed in yet retries next tick without advancing
+/// `elapsed` (the virtual clock starts once the asset resolves).
 pub fn advance_triggered_execs(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
@@ -89,12 +90,27 @@ pub fn advance_triggered_execs(
 ) {
     let dt = time.delta_secs();
     for (entity, mut exec) in &mut execs {
-        exec.elapsed += dt;
-
-        let Some(timeline) = handles.0.get(&exec.skill_id).and_then(|h| timelines.get(h)) else {
+        // Distinguish "skill genuinely unknown" (no handle registered at all — give up) from
+        // "asset still streaming in" (handle registered, `CastTimeline` not loaded yet — retry
+        // next tick). A trigger can fire before its skill's async-loaded timeline asset arrives,
+        // so the pending case must NOT despawn (mirrors `advance_casts`'s analogous resolve,
+        // which also tolerates a not-yet-loaded timeline rather than giving up).
+        let Some(handle) = handles.0.get(&exec.skill_id) else {
+            warn!(
+                "advance_triggered_execs: unknown skill '{}' — dropping triggered execution",
+                exec.skill_id
+            );
             commands.entity(entity).despawn();
             continue;
         };
+        let Some(timeline) = timelines.get(handle) else {
+            // Asset not loaded yet — retry next tick. Elapsed must NOT accumulate while
+            // pending: the execution's virtual clock starts when the asset arrives, not when
+            // `execute_skill_timeline` was called.
+            continue;
+        };
+
+        exec.elapsed += dt;
 
         if exec.spawned.len() < timeline.collision_windows.len() {
             exec.spawned.resize(timeline.collision_windows.len(), false);
