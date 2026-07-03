@@ -32,6 +32,16 @@ pub struct ActiveCast {
     /// caster origin at projectile / hitbox spawn. `Vec3::ZERO` (the default) = spawn at the
     /// caster origin, byte-identical to the pre-offset behaviour.
     pub muzzle_offset: Vec3,
+    /// This cast's CAST POINT (Task 10, spec §3.2), resolved once at validation time by
+    /// `validate_casts` against the timeline's authored `Acquisition`. `Some` for `SelfPoint`
+    /// (caster position) and a satisfied `GroundPoint` (the aimed point, PRESERVED — no longer
+    /// collapsed to a direction, the historic blizzard blocker); `None` for `Aim`/
+    /// `HitscanEntity` casts, which don't need one — `validate_timeline` refuses to load a
+    /// `WindowAnchor::CastPoint` window on a timeline whose acquisition can't reach a
+    /// point-producing branch, so a live cast with `cast_point: None` never actually spawns a
+    /// `CastPoint`-anchored window. `advance_casts`' spawn site still falls back to the caster's
+    /// position when `None`, purely as a defensive default (dead in valid content).
+    pub cast_point: Option<Vec3>,
 }
 
 impl ActiveCast {

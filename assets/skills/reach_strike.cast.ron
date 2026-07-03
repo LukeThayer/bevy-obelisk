@@ -1,0 +1,17 @@
+// Task 10 fixture (spec §3.2): a `cleave`-shaped melee attack that additionally REQUIRES an
+// acquired entity target within `range` — demonstrates `HitscanEntity` acquisition's range gate
+// restoring the `CastRejected reason=OutOfRange` behavior that died with the v1 `CastTargeting`
+// schema. Deliberately a SEPARATE skill from `cleave` (which stays acquisition-free / `Aim`, the
+// default): `cleave` is also cast by DIRECTION in other scenarios (`cone_cleave`, `faction_filter`)
+// and `HitscanEntity` requires an `Entity` aim — gating `cleave` itself would reject those
+// direction-aimed sweeps too.
+(
+  skill_id: "reach_strike",
+  phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+  acquisition: HitscanEntity( range: 5.0, filter: Enemies, fallback: Fizzle ),
+  collision_windows: [
+    ( id: "arc", spawn: Scheduled( phase: Active, offset: 0.0 ), active_duration: 0.1,
+      shape: Cone( angle: 120.0, range: 3.0 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+)

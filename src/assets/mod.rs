@@ -14,8 +14,61 @@ pub struct CastTimeline {
     pub phase_durations: PhaseDurations,
     #[serde(default)]
     pub collision_windows: Vec<CollisionWindow>,
+    /// How a resolved `CastAim` (the HOST's raw-input resolution — verbs unchanged) is checked
+    /// and, for point-producing branches, turned into this cast's CAST POINT (Task 10, spec
+    /// §3.2). Defaults to `Aim` (any aim accepted, no cast point) so all pre-Task-10 content
+    /// parses unchanged. `#[reflect(ignore)]`: `AcqFallback::Then(Box<Acquisition>)` is
+    /// self-referential through a `Box`, which `bevy_reflect`'s derive can't close over (no
+    /// blanket `Reflect` impl for `Box<T>` in this version) — the field stays fully
+    /// serde-round-trippable, it's just invisible to the (unused-here) reflection APIs.
+    #[serde(default)]
+    #[reflect(ignore)]
+    pub acquisition: Acquisition,
     #[serde(default)]
     pub vfx_cues: std::collections::HashMap<String, String>,
+}
+
+/// Authored aim-acquisition requirement (Task 10, spec §3.2). `validate_casts` checks the
+/// HOST-resolved `CastAim` against this tree and, on failure, walks `AcqFallback` chains until
+/// one is met or the chain bottoms out at `Fizzle` (a paid `CastRejected`). Only the fallible
+/// branches (`HitscanEntity`/`GroundPoint`) carry a `fallback` field — `Aim`/`SelfPoint` cannot
+/// fail, so a fallback on them would be dead data; this is enforced BY CONSTRUCTION (the fields
+/// simply don't exist on those variants) rather than by a runtime check.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum Acquisition {
+    /// Any resolved aim is accepted as-is (Entity/Point degrade to their direction for facing
+    /// purposes, same as pre-Task-10 behavior). Produces no cast point.
+    #[default]
+    Aim,
+    /// Any resolved aim is accepted; the cast point is always the CASTER's position at cast
+    /// time (self-centered effects — e.g. a storm summoned over the caster's own head).
+    SelfPoint,
+    /// Requires the resolved aim to be `CastAim::Entity`, within `range` of the caster, and
+    /// passing `filter` against the caster's faction. On success the cast proceeds with its
+    /// existing entity-aim target/direction (no cast point produced — v1 doesn't need the
+    /// target's position as a point). On failure (wrong aim kind, out of range, or filter
+    /// mismatch) runs `fallback`.
+    HitscanEntity {
+        range: f32,
+        filter: HitFilter,
+        fallback: AcqFallback,
+    },
+    /// Requires the resolved aim to be `CastAim::Point`, within `range` of the caster. On
+    /// success the cast point IS that point (preserved — the historic "blizzard blocker": a
+    /// ground-targeted point is no longer collapsed to a direction). On failure runs `fallback`.
+    GroundPoint { range: f32, fallback: AcqFallback },
+}
+
+/// What to do when an `Acquisition` branch's requirement isn't met by the resolved aim.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AcqFallback {
+    /// A paid rejection: `validate_casts` fires `CastRejected` (the cast never begins — no
+    /// `ActiveCast`, no cooldown started) with the reason the LAST attempted branch failed for.
+    Fizzle,
+    /// Re-check the SAME resolved aim against another `Acquisition` node (chains e.g.
+    /// `GroundPoint` -> `SelfPoint` so a ground-point skill still resolves to "above the
+    /// caster" when no point was aimed).
+    Then(Box<Acquisition>),
 }
 
 #[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
@@ -180,6 +233,9 @@ pub enum CastLoadError {
 /// schema; what remains to check today:
 /// - a `Template` window must be referenced by an emitter — emitters land in Task 11, so until
 ///   then ANY `Template` window is an error (validation stays honest at every commit).
+/// - (Task 10) a `WindowAnchor::CastPoint` window must be reachable from a timeline whose
+///   `acquisition` can actually produce a cast point — otherwise the window would silently fall
+///   back to the caster's position at spawn time, masking an authoring mistake.
 pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
     for w in &tl.collision_windows {
         if w.spawn == WindowSpawn::Template {
@@ -189,8 +245,37 @@ pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
                 w.id
             ));
         }
+        if w.anchor == WindowAnchor::CastPoint && !acquisition_can_produce_point(&tl.acquisition) {
+            return Err(format!(
+                "window '{}' anchors on CastPoint, but this timeline's acquisition ({:?}) can \
+                 never produce a cast point — add a GroundPoint/SelfPoint branch (directly or via \
+                 a fallback chain) or change the window's anchor to Caster",
+                w.id, tl.acquisition
+            ));
+        }
     }
     Ok(())
+}
+
+/// Whether `acq` (walking its fallback chain, if any) can EVER resolve to a cast point.
+/// `SelfPoint` always can (it's unconditional); `GroundPoint`'s own success always produces one
+/// too (only its fallback matters when it doesn't apply/fit); `Aim` never does; `HitscanEntity`'s
+/// success never does (v1 doesn't surface the target's position), so only its fallback chain
+/// can rescue a point.
+fn acquisition_can_produce_point(acq: &Acquisition) -> bool {
+    match acq {
+        Acquisition::Aim => false,
+        Acquisition::SelfPoint => true,
+        Acquisition::GroundPoint { .. } => true,
+        Acquisition::HitscanEntity { fallback, .. } => fallback_can_produce_point(fallback),
+    }
+}
+
+fn fallback_can_produce_point(fb: &AcqFallback) -> bool {
+    match fb {
+        AcqFallback::Fizzle => false,
+        AcqFallback::Then(next) => acquisition_can_produce_point(next),
+    }
 }
 
 /// Maps skill_id -> loaded timeline handle.
@@ -248,6 +333,7 @@ mod tests {
                 recovery: 0.1,
             },
             collision_windows: vec![win],
+            acquisition: Acquisition::default(),
             vfx_cues: Default::default(),
         }
     }

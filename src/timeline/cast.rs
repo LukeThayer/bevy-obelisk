@@ -1,6 +1,11 @@
 use bevy::prelude::*;
 
-/// How a cast is aimed. Resolved to a facing direction at validation time.
+/// How a cast is aimed — resolved by the HOST from raw input (unchanged by Task 10). Always
+/// reduced to a facing direction at validation time (projectile heading / cone axis); ADDITIONALLY
+/// checked against the timeline's authored `Acquisition` (`src/assets/mod.rs`), which gates
+/// whether this aim is acceptable for the skill and, for `Point`, may PRESERVE it (instead of
+/// collapsing it to a direction) as the cast's `ActiveCast::cast_point` — what a
+/// `WindowAnchor::CastPoint` window spawns at.
 #[derive(Clone, Copy, Debug)]
 pub enum CastAim {
     /// Aim at an entity (direction = toward its transform; range = distance to it).

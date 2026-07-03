@@ -82,26 +82,32 @@ pub fn faction_filter() -> Scenario {
         )
 }
 
-/// Out of range: an enemy 10 units away, cleave's cone reaches 3.
-/// Mirrors `tests/spatial_targeting.rs::out_of_range_cast_is_rejected` (currently `#[ignore]`d).
-/// Schema v2 (Task 9) DELETED the authored `CastTargeting` range gate with the v1 schema, so
-/// until acquisition (Task 10) restores range gating the cast VALIDATES and whiffs: expect
-/// `CastBegan` + phase events and still no Damage. Task 10 re-goldens this to `CastRejected
-/// reason=OutOfRange`.
+/// Out of range: an enemy 10 units away, `reach_strike`'s acquisition reaches 5.
+/// Mirrors `tests/spatial_targeting.rs::out_of_range_cast_is_rejected` (un-ignored in Task 10).
+/// Schema v2 (Task 9) DELETED the authored `CastTargeting` range gate with the v1 schema; Task 10
+/// restores range gating via authored `Acquisition` — this golden FLIPS from Task 9's whiff
+/// (`CastBegan` + phase events, no damage) back to a clean `CastRejected reason=OutOfRange` (the
+/// PERMITTED golden delta for this task; every other scenario is byte-identical).
+///
+/// Uses `reach_strike` (a `cleave`-shaped melee attack, `assets/skills/reach_strike.cast.ron`)
+/// rather than `cleave` itself: `cleave` is ALSO cast by DIRECTION elsewhere (`cone_cleave`,
+/// `faction_filter`), and `HitscanEntity` acquisition requires an `Entity` aim — gating `cleave`
+/// itself would reject those direction-aimed sweeps too and change their (must-stay-identical)
+/// goldens. `reach_strike` isolates the acquisition demo to its own skill/asset pair.
 pub fn out_of_range() -> Scenario {
     Scenario::new("out_of_range", 7, 30)
         .describe(
-            "A cast at a target beyond the skill's reach whiffs with no damage (the authored range gate died with schema v2; acquisition restores OutOfRange rejection in Task 10).",
+            "A cast at a target beyond the skill's authored acquisition range is rejected (OutOfRange), no damage.",
         )
-        .cast_asset("cleave")
+        .cast_asset("reach_strike")
         .actor("player", Faction::Player, 100.0, 100.0, Vec3::ZERO)
-        .with_skill("cleave")
+        .with_skill("reach_strike")
         .actor("far", Faction::Enemy, 50.0, 0.0, Vec3::new(0.0, 0.0, 10.0))
         .at(
             1,
             Action::Cast {
                 caster: "player".into(),
-                skill: "cleave".into(),
+                skill: "reach_strike".into(),
                 aim: Aim::Entity("far".into()),
             },
         )

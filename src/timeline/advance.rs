@@ -1,9 +1,9 @@
 use crate::assets::{
-    CastTimeline, CastTimelineHandles, CollisionWindow, PhaseDurations, VolumeMotion, WindowPhase,
-    WindowSpawn,
+    AcqFallback, Acquisition, CastTimeline, CastTimelineHandles, CollisionWindow, PhaseDurations,
+    VolumeMotion, WindowAnchor, WindowPhase, WindowSpawn,
 };
 use crate::combat::system::is_invalid_lifecycle_target;
-use crate::core::components::Attributes;
+use crate::core::components::{Attributes, Faction};
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
 use crate::events::{
@@ -11,6 +11,7 @@ use crate::events::{
     HitWindowOpened, HitboxEnded, HitboxWorldHit,
 };
 use crate::spatial::boxes::{Hitbox, Hurtbox};
+use crate::spatial::filter::passes_filter;
 use crate::spatial::projectile::Projectile;
 use crate::timeline::cast::{charge_mult, CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
@@ -21,9 +22,11 @@ use stat_core::TriggerCondition;
 
 /// Validate pending casts: skill known? timeline loaded? mana/conditions ok? Then insert ActiveCast.
 ///
-/// NOTE (schema v2): the authored `CastTargeting` range gate died with the v1 schema —
-/// range/aim acquisition arrives properly in Task 10. Until then no cast is rejected
-/// `OutOfRange`; line-of-sight gating on entity aims survives unchanged.
+/// (Task 10) the authored `CastTargeting` range gate that died with the v1 schema is restored,
+/// re-keyed to the timeline's `Acquisition`: `validate_casts` checks the HOST-resolved `CastAim`
+/// against it (walking `AcqFallback` chains) and rejects `OutOfRange`/`NoTarget` per
+/// [`resolve_acquisition`] when no branch is met. Line-of-sight gating on entity aims is a
+/// SEPARATE, unchanged check.
 #[allow(clippy::too_many_arguments)]
 pub fn validate_casts(
     mut commands: Commands,
@@ -34,6 +37,7 @@ pub fn validate_casts(
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
     transforms: Query<&Transform>,
+    factions: Query<&Faction>,
     spatial: SpatialQuery,
     hurtboxes: Query<(Entity, &Hurtbox)>,
     mut cooldowns: ResMut<Cooldowns>,
@@ -157,6 +161,29 @@ pub fn validate_casts(
             }
         }
 
+        // Authored acquisition gate (Task 10): does this resolved aim satisfy the timeline's
+        // `Acquisition` (walking `AcqFallback` chains)? Rejects (paid — no `ActiveCast`, no
+        // cooldown started, same as every other early reject above) if the chain bottoms out at
+        // `Fizzle`; otherwise yields this cast's CAST POINT, if the winning branch produces one.
+        let cast_point = match resolve_acquisition(
+            &timeline.acquisition,
+            req.aim,
+            caster_pos,
+            &transforms,
+            &factions,
+            caster,
+        ) {
+            Ok(cast_point) => cast_point,
+            Err(reason) => {
+                commands.trigger(CastRejected {
+                    caster,
+                    skill_id: req.skill_id.clone(),
+                    reason,
+                });
+                continue;
+            }
+        };
+
         // Speed-scale the authored phase durations at cast start.
         let rate = effective_rate(&attrs.0, skill);
         let base = (
@@ -178,6 +205,7 @@ pub fn validate_casts(
             fired_windows: Vec::new(),
             charge: req.charge,
             muzzle_offset: req.muzzle_offset,
+            cast_point,
         });
         commands.trigger(CastBegan {
             caster,
@@ -194,6 +222,118 @@ pub fn validate_casts(
             });
         }
     }
+}
+
+/// Check a HOST-resolved `CastAim` against an authored `Acquisition` (Task 10, spec §3.2),
+/// walking `AcqFallback::Then` chains against the SAME `aim` until a branch is met or the chain
+/// bottoms out at `Fizzle`. Returns the resulting CAST POINT (`Some` only for `SelfPoint`/a
+/// satisfied `GroundPoint` — `Aim`/`HitscanEntity` never produce one in v1) on success, or the
+/// rejection reason the LAST attempted branch failed for.
+///
+/// REJECTION-REASON MAPPING (reuses the existing `CastRejectReason` enum — no new variant): a
+/// branch that fails because the aim is the WRONG KIND (e.g. a direction/point aim checked
+/// against `HitscanEntity`, or a non-point aim checked against `GroundPoint`) or an `Entity` aim
+/// that fails the faction `filter` maps to `NoTarget` ("no valid target of the kind this branch
+/// needs"); a branch that fails because a genuine distance check came up short (`HitscanEntity`
+/// or `GroundPoint` beyond `range`) maps to `OutOfRange`. Both variants already exist and read
+/// honestly for every failure mode this schema can produce, so no new variant was added.
+fn resolve_acquisition(
+    acq: &Acquisition,
+    aim: CastAim,
+    caster_pos: Vec3,
+    transforms: &Query<&Transform>,
+    factions: &Query<&Faction>,
+    caster: Entity,
+) -> Result<Option<Vec3>, CastRejectReason> {
+    match acq {
+        Acquisition::Aim => Ok(None),
+        Acquisition::SelfPoint => Ok(Some(caster_pos)),
+        Acquisition::HitscanEntity {
+            range,
+            filter,
+            fallback,
+        } => match check_hitscan_entity(
+            aim, *range, *filter, caster_pos, transforms, factions, caster,
+        ) {
+            Ok(()) => Ok(None),
+            Err(reason) => resolve_fallback(
+                fallback, aim, caster_pos, transforms, factions, caster, reason,
+            ),
+        },
+        Acquisition::GroundPoint { range, fallback } => {
+            match check_ground_point(aim, *range, caster_pos) {
+                Ok(point) => Ok(Some(point)),
+                Err(reason) => resolve_fallback(
+                    fallback, aim, caster_pos, transforms, factions, caster, reason,
+                ),
+            }
+        }
+    }
+}
+
+/// Apply an `AcqFallback`: `Fizzle` surfaces `reason` (the failure the branch that fell back
+/// bottomed out on); `Then` re-checks the SAME `aim` against the next `Acquisition` node.
+#[allow(clippy::too_many_arguments)]
+fn resolve_fallback(
+    fallback: &AcqFallback,
+    aim: CastAim,
+    caster_pos: Vec3,
+    transforms: &Query<&Transform>,
+    factions: &Query<&Faction>,
+    caster: Entity,
+    reason: CastRejectReason,
+) -> Result<Option<Vec3>, CastRejectReason> {
+    match fallback {
+        AcqFallback::Fizzle => Err(reason),
+        AcqFallback::Then(next) => {
+            resolve_acquisition(next, aim, caster_pos, transforms, factions, caster)
+        }
+    }
+}
+
+/// `HitscanEntity`'s own requirement: `aim` must be `CastAim::Entity`, resolvable (the caller —
+/// `validate_casts` — already rejected `NoTarget` upstream for an entity aim whose transform is
+/// gone, so `transforms.get` failing here is a defensive `NoTarget`, not a normally-reached
+/// path), within `range`, and pass `filter` against the caster's faction.
+fn check_hitscan_entity(
+    aim: CastAim,
+    range: f32,
+    filter: crate::assets::HitFilter,
+    caster_pos: Vec3,
+    transforms: &Query<&Transform>,
+    factions: &Query<&Faction>,
+    caster: Entity,
+) -> Result<(), CastRejectReason> {
+    let CastAim::Entity(e) = aim else {
+        return Err(CastRejectReason::NoTarget); // wrong aim kind
+    };
+    let Ok(tf) = transforms.get(e) else {
+        return Err(CastRejectReason::NoTarget);
+    };
+    if tf.translation.distance(caster_pos) > range {
+        return Err(CastRejectReason::OutOfRange);
+    }
+    let caster_faction = factions.get(caster).copied().unwrap_or_default();
+    let target_faction = factions.get(e).copied().unwrap_or_default();
+    if !passes_filter(filter, caster_faction, target_faction, e == caster) {
+        return Err(CastRejectReason::NoTarget);
+    }
+    Ok(())
+}
+
+/// `GroundPoint`'s own requirement: `aim` must be `CastAim::Point`, within `range` of the caster.
+fn check_ground_point(
+    aim: CastAim,
+    range: f32,
+    caster_pos: Vec3,
+) -> Result<Vec3, CastRejectReason> {
+    let CastAim::Point(p) = aim else {
+        return Err(CastRejectReason::NoTarget); // wrong aim kind
+    };
+    if p.distance(caster_pos) > range {
+        return Err(CastRejectReason::OutOfRange);
+    }
+    Ok(p)
 }
 
 pub fn advance_casts(
@@ -248,15 +388,25 @@ pub fn advance_casts(
             let start = window_start_time(&effective, win);
             if prev_elapsed < start && cast.elapsed >= start {
                 cast.fired_windows.push(win.id.clone());
-                // Anchor resolution for a player cast: until acquisition (Task 10) gives casts
-                // a distinct acquired point, `Caster` and `CastPoint` both resolve to the
-                // caster's muzzle origin; `anchor_offset` applies on top in world axes.
+                // Anchor resolution for a player cast (Task 10): `Caster` spawns at the caster's
+                // origin + muzzle offset (unchanged); `CastPoint` spawns at the cast's ACQUIRED
+                // point (`ActiveCast::cast_point`, resolved once at validation time by
+                // `resolve_acquisition` — e.g. a `GroundPoint` cast's aimed position, PRESERVED
+                // rather than collapsed to a direction). `cast_point` is `None` only for
+                // `Aim`/`HitscanEntity` casts, which `validate_timeline` guarantees never own a
+                // `CastPoint`-anchored window — the caster-position fallback below is therefore
+                // dead in valid content, kept only as a defensive default. Either way
+                // `anchor_offset` applies on top in world axes.
+                let anchor_base = match win.anchor {
+                    WindowAnchor::Caster => caster_tf.translation + cast.muzzle_offset,
+                    WindowAnchor::CastPoint => cast.cast_point.unwrap_or(caster_tf.translation),
+                };
                 spawn_window_hitbox(
                     &mut commands,
                     win,
                     caster,
                     &cast.skill_id,
-                    caster_tf.translation + cast.muzzle_offset + win.anchor_offset,
+                    anchor_base + win.anchor_offset,
                     cast.aim_dir,
                     cast.charge,
                     ChainPayload {

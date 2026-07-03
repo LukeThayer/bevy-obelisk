@@ -53,6 +53,7 @@ fn chain_timeline() -> CastTimeline {
             recovery: 0.05,
         },
         collision_windows: vec![beam_window("arc", WindowPhase::Active)],
+        acquisition: Default::default(),
         vfx_cues: HashMap::from([
             ("on_window_arc".to_string(), "cl_arc".to_string()),
             ("on_window_hop".to_string(), "cl_hop".to_string()),
