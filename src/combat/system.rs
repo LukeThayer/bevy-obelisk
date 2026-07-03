@@ -51,6 +51,22 @@ pub fn is_invalid_timeline_target(cond: &SkillCondition, handles: &CastTimelineH
     handles.0.contains_key(&cond.trigger_skill) && !cond.additional
 }
 
+/// The Lifecycle-phase companion to `is_invalid_timeline_target`, flagging the opposite defect:
+/// a `ConditionPhase::Lifecycle` condition (`OnImpact`/`OnExpire`) whose `trigger_skill` has NO
+/// registered timeline. `end_hitboxes` (Task 8, `src/timeline/advance.rs`) is the ONLY site that
+/// ever evaluates a Lifecycle condition — `eval_condition_obelisk_side` above always returns
+/// `false` for `ConditionPhase::Lifecycle` during hit resolution, so there is no packet-resolve
+/// fallback the way `additional = false` implies for a hit-phase timeline-target condition (a
+/// world impact / fuse-out in empty air has no defending entity to resolve a packet against
+/// either way). Same load-order reasoning as `is_invalid_timeline_target`'s doc: `CastTimelineHandles`
+/// isn't populated until after skills load, so this can only be a runtime check, not a load-time
+/// one. Pure predicate (no `warn!`), `pub` for the same external-test reason as
+/// `is_invalid_timeline_target` — `end_hitboxes` calls this to decide whether to warn and skip.
+pub fn is_invalid_lifecycle_target(cond: &SkillCondition, handles: &CastTimelineHandles) -> bool {
+    cond.condition.phase() == ConditionPhase::Lifecycle
+        && !handles.0.contains_key(&cond.trigger_skill)
+}
+
 /// Splits `conditions` into (timeline-target, packet) buckets by whether `trigger_skill` has a
 /// registered `CastTimeline` handle:
 ///   - timeline-target: Task 6's skill B has its own timeline. `on_hit_confirmed` strips these

@@ -2,6 +2,7 @@ use crate::assets::{
     CastTargeting, CastTimeline, CastTimelineHandles, CollisionWindow, EndReaction, PhaseDurations,
     VolumeMotion, WindowPhase,
 };
+use crate::combat::system::is_invalid_lifecycle_target;
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
@@ -13,8 +14,10 @@ use crate::spatial::boxes::{Hitbox, Hurtbox};
 use crate::spatial::projectile::Projectile;
 use crate::timeline::cast::{charge_mult, CastAim, PendingCast};
 use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillPhase};
+use crate::timeline::triggered::{execute_skill_timeline, ExecPayload};
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
+use stat_core::TriggerCondition;
 
 /// The max cast range for a targeting mode, if it gates on range. `None` = no range gate.
 pub fn targeting_range(targeting: &CastTargeting) -> Option<f32> {
@@ -407,11 +410,25 @@ pub fn on_hitbox_world_hit(ev: On<HitboxWorldHit>, mut commands: Commands) {
 /// any hitbox that is done (`HitMode::FirstOnly` consumed → `HitEntity`), world-struck
 /// (`WorldHit` marker → `HitWorld`), or out of time (`Fuse`) — priority in that order. Ending
 /// = spawn the window's authored `on_end` reaction AT THE END POSITION (chained windows carry
-/// the original caster, aim, and charge), fire [`HitboxEnded`], despawn.
+/// the original caster, aim, and charge), evaluate the ending skill's Lifecycle conditions
+/// (Task 8, below), fire [`HitboxEnded`], despawn.
 ///
 /// Replaces the old `expire_hitboxes` (whose fuse-despawn was the only death) — a `FirstOnly`
 /// hitbox now also ends immediately on its hit instead of lingering inert until the fuse
 /// (damage-neutral: `done` already blocked every further hit).
+///
+/// Task 8 — lifecycle evaluation: independent of the legacy `on_end` Chain/Retarget reaction
+/// above (a spatial-authoring concept, keyed by `window_id`), this evaluates the ending skill's
+/// RULES conditions (`SkillRegistry`, keyed by `skill_id`) whose `TriggerCondition` is
+/// `OnImpact`/`OnExpire` — `HitWorld → OnImpact`, `Fuse → OnExpire`, `HitEntity → nothing` (that
+/// hit already ran Task 7's hit-phase evaluation in `on_hit_confirmed`). Lifecycle conditions
+/// carry no stat context (`eval_condition_obelisk_side` always returns `false` for them during
+/// hit resolution) — a direct `TriggerCondition` variant match against the mapped reason IS the
+/// evaluation, no `TriggerConditionEval` call. A match executes the named skill's timeline AT
+/// THE END POSITION, one trigger-depth deeper; a match with no registered timeline
+/// (`is_invalid_lifecycle_target`) warns and is skipped — there's no defending entity to resolve
+/// a packet against at a world impact or a fuse-out in empty air, so unlike a hit-phase
+/// timeline-target condition there is no packet fallback to fall back to.
 #[allow(clippy::too_many_arguments)]
 pub fn end_hitboxes(
     mut commands: Commands,
@@ -419,6 +436,7 @@ pub fn end_hitboxes(
     mut q: Query<(Entity, &mut Hitbox, &Transform, Option<&WorldHit>)>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
+    registry: Res<SkillRegistry>,
     hurtboxes: Query<(Entity, &Hurtbox)>,
     combatants: Query<(&Transform, &crate::core::components::Faction), Without<Hitbox>>,
     factions: Query<&crate::core::components::Faction>,
@@ -513,6 +531,47 @@ pub fn end_hitboxes(
                 }
                 // Retarget with hops exhausted, or no reaction: the chain just ends.
                 _ => {}
+            }
+        }
+        // Task 8 — lifecycle evaluation (spec §3.2): independent of the on_end reaction above,
+        // runs for every ending regardless. `HitEntity` maps to nothing — the hit path
+        // (`on_hit_confirmed`) already ran Task 7's evaluation for that ending.
+        let lifecycle_cond = match reason {
+            EndReason::HitWorld => Some(TriggerCondition::OnImpact),
+            EndReason::Fuse => Some(TriggerCondition::OnExpire),
+            EndReason::HitEntity => None,
+        };
+        if let Some(target_cond) = lifecycle_cond {
+            if let Some(skill) = registry.0.get(&hb.skill_id) {
+                for cond in &skill.conditions {
+                    if cond.condition != target_cond {
+                        continue;
+                    }
+                    if is_invalid_lifecycle_target(cond, &handles) {
+                        warn!(
+                            "skill '{}' has a lifecycle condition ({:?}) naming trigger_skill \
+                             '{}' with no registered timeline — nothing to execute at this \
+                             {:?} end (position {:?})",
+                            hb.skill_id, cond.condition, cond.trigger_skill, reason, position
+                        );
+                        continue;
+                    }
+                    execute_skill_timeline(
+                        &mut commands,
+                        hb.caster,
+                        &cond.trigger_skill,
+                        ExecPayload {
+                            position,
+                            // No facing context at a world impact / fuse expiry — same
+                            // documented placeholder Task 7 uses for `HitConfirmed`-driven
+                            // triggers (see `on_hit_confirmed`'s `ExecPayload::direction` doc).
+                            direction: Vec3::X,
+                            target: None,
+                            charge: hb.charge,
+                            depth: hb.depth.saturating_add(1),
+                        },
+                    );
+                }
             }
         }
         commands.trigger(HitboxEnded {

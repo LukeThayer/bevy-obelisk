@@ -9,7 +9,9 @@ use obelisk_bevy::assets::{
     CastDelivery, CastTargeting, CollisionShape, CollisionWindow, HitFilter, HitMode, OnEnd,
     PhaseDurations, VolumeMotion, WindowPhase,
 };
-use obelisk_bevy::combat::system::{is_invalid_timeline_target, partition_conditions};
+use obelisk_bevy::combat::system::{
+    is_invalid_lifecycle_target, is_invalid_timeline_target, partition_conditions,
+};
 use obelisk_bevy::prelude::*;
 use obelisk_bevy::testkit::ObeliskTestApp;
 use obelisk_bevy::timeline::triggered::TriggeredExec;
@@ -723,4 +725,388 @@ fn timeline_target_condition_requires_additional_true() {
         "the invalid condition is still bucketed as timeline-target, never silently dropped"
     );
     assert!(packet_conditions.is_empty());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Task 8 — lifecycle evaluation in the end funnel (spec §3.2): a hitbox that ends on the WORLD
+// (`HitWorld`) or by `Fuse` fires its skill's `on_impact`/`on_expire` Lifecycle conditions,
+// executing the named skill's OWN timeline AT THE END POSITION. `HitEntity` endings do nothing
+// here — that hit already ran Task 7's evaluation in `on_hit_confirmed`. Reuses the fireball
+// bolt/explosion timelines above (Task 7's `fireball_bolt_timeline` / `fireball_explosion_timeline`
+// are pure spatial shapes with no rules coupling) — only the RULES toml differs: Lifecycle
+// conditions instead of a hit-phase `Always`.
+// ---------------------------------------------------------------------------------------------
+
+/// `fireball` carries BOTH `on_impact` and `on_expire` conditions naming `fireball_explosion`
+/// (`additional = true`, the v1-required form — see `is_invalid_timeline_target`'s doc; Lifecycle
+/// conditions have their own analogous requirement, `is_invalid_lifecycle_target`, checked by a
+/// dedicated test below).
+fn fireball_lifecycle_toml() -> String {
+    r#"
+[[skills]]
+id = "fireball"
+name = "Fireball"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+[[skills.conditions]]
+trigger_skill = "fireball_explosion"
+type = "on_impact"
+additional = true
+[[skills.conditions]]
+trigger_skill = "fireball_explosion"
+type = "on_expire"
+additional = true
+[skills.damage]
+base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
+
+[[skills]]
+id = "fireball_explosion"
+name = "Fireball Explosion"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "fire", min = 15.0, max = 15.0 }]
+"#
+    .to_string()
+}
+
+/// Player + dummy (at `dummy_pos`) pair with `fireball_lifecycle_toml`'s pair registered in BOTH
+/// `SkillRegistry` (rules) and `CastTimelineHandles`/`Assets<CastTimeline>` (spatial) — mirrors
+/// `harness_with_fireball_pair` above, but with Lifecycle conditions instead of a hit-phase one.
+fn harness_with_fireball_lifecycle_pair(
+    seed: u64,
+    dummy_pos: Vec3,
+) -> (ObeliskTestApp, Entity, Entity) {
+    let mut t = ObeliskTestApp::new(seed);
+
+    let skills = stat_core::config::parse_skills(&fireball_lifecycle_toml()).unwrap();
+    t.app
+        .world_mut()
+        .resource_mut::<SkillRegistry>()
+        .0
+        .extend(skills);
+
+    let bolt_handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .add(fireball_bolt_timeline());
+    let blast_handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .add(fireball_explosion_timeline());
+    {
+        let mut handles = t.app.world_mut().resource_mut::<CastTimelineHandles>();
+        handles.0.insert("fireball".into(), bolt_handle);
+        handles.0.insert("fireball_explosion".into(), blast_handle);
+    }
+
+    let player = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("player", 100.0, 100.0)),
+            Faction::Player,
+            ObeliskId("player".into()),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ))
+        .id();
+    let dummy = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("dummy", 500.0, 0.0)),
+            Faction::Enemy,
+            ObeliskId("dummy".into()),
+            Transform::from_translation(dummy_pos),
+        ))
+        .id();
+    {
+        let mut commands = t.app.world_mut().commands();
+        insert_hurtbox(&mut commands, dummy, 0.6, dummy_pos);
+    }
+    t.app.update();
+    (t, player, dummy)
+}
+
+/// World position of the live `Hitbox` whose `window_id` is `window_id`, if any — used to catch
+/// a triggered exec's window right after it spawns (before its own short fuse despawns it).
+fn hitbox_transform_for_window(t: &mut ObeliskTestApp, window_id: &str) -> Option<Vec3> {
+    let mut q = t.app.world_mut().query::<(&Transform, &Hitbox)>();
+    q.iter(t.app.world())
+        .find(|(_, hb)| hb.window_id == window_id)
+        .map(|(tf, _)| tf.translation)
+}
+
+/// A `HitWorld` ending fires `on_impact`: the bolt is manually world-hit (mirrors
+/// `tests/end_events.rs::host_world_hit_ends_with_hit_world_at_the_impact_point`, since the
+/// headless harness has no floor for a real physics impact) at a point OFF the bolt's own flight
+/// line but within the explosion's blast radius of a staged dummy — so the bolt itself never
+/// hits the dummy directly (isolating the assertion to the lifecycle-triggered explosion), but
+/// the explosion, spawned exactly at the impact point, does.
+#[test]
+fn world_impact_triggers_explosion_at_the_impact_point() {
+    // Dummy at z = 1.5: sum of bolt + hurtbox radii (0.5 + 0.6 = 1.1) < 1.5, so the flying bolt
+    // never overlaps it; sum of blast + hurtbox radii (1.5 + 0.6 = 2.1) > 1.5, so the explosion
+    // (spawned at the impact point, z = 0) reaches it.
+    let (mut t, player, _dummy) =
+        harness_with_fireball_lifecycle_pair(30, Vec3::new(1.2, 0.0, 1.5));
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir("fireball", Dir3::X);
+    t.advance_ticks(10); // window is open, bolt in flight
+
+    let hitbox = t
+        .app
+        .world_mut()
+        .query_filtered::<Entity, With<Hitbox>>()
+        .single(t.app.world())
+        .expect("bolt hitbox in flight");
+    let impact = Vec3::new(1.2, 0.0, 0.0);
+    t.app.world_mut().trigger(HitboxWorldHit {
+        hitbox,
+        position: impact,
+    });
+    t.advance_ticks(6); // end_hitboxes processes the marked WorldHit, spawns the explosion exec
+
+    let blast_pos = hitbox_transform_for_window(&mut t, "blast")
+        .expect("the explosion's blast window has spawned");
+    assert!(
+        (blast_pos - impact).length() < 0.2,
+        "explosion spawned AT the impact point, got {blast_pos:?} vs {impact:?}"
+    );
+
+    t.advance_ticks(15); // let the blast's active window resolve its hit against the staged dummy
+
+    let rec = t.rec();
+    assert!(
+        rec.damage_resolved
+            .iter()
+            .any(|d| d.skill_id == "fireball_explosion" && d.caster == player),
+        "ground impact must resolve the explosion's damage against the staged dummy, got {:?}",
+        rec.damage_resolved
+            .iter()
+            .map(|d| d.skill_id.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        rec.hit_window_opened
+            .iter()
+            .any(|w| w.skill_id == "fireball_explosion" && w.window_id == "blast"),
+        "HitWindowOpened for the triggered explosion, got {:?}",
+        rec.hit_window_opened
+            .iter()
+            .map(|w| (w.skill_id.as_str(), w.window_id.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// A `Fuse` ending fires `on_expire`: cast into empty air (nothing for the bolt to hit), let its
+/// active-window fuse run all the way out, and the explosion's timeline executes AT the bolt's
+/// final (fuse-out) position.
+#[test]
+fn fuse_expiry_triggers_explosion() {
+    let (mut t, player, _dummy) =
+        harness_with_fireball_lifecycle_pair(31, Vec3::new(50.0, 0.0, 50.0));
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir("fireball", Dir3::X);
+
+    // The bolt's window active_duration is 1.0s (off a 0.05s windup) — advance well past it so
+    // the fuse runs out mid-air.
+    app_step_secs(&mut t, 1.3);
+
+    let ended = t
+        .rec()
+        .hitbox_ended
+        .iter()
+        .find(|e| e.window_id == "bolt")
+        .cloned()
+        .expect("bolt ended by fuse");
+    assert_eq!(
+        ended.reason,
+        EndReason::Fuse,
+        "empty air: no world/entity hit, only the fuse"
+    );
+
+    let rec = t.rec();
+    assert!(
+        rec.hit_window_opened
+            .iter()
+            .any(|w| w.skill_id == "fireball_explosion" && w.window_id == "blast"),
+        "fuse expiry must trigger the explosion's timeline, got {:?}",
+        rec.hit_window_opened
+            .iter()
+            .map(|w| (w.skill_id.as_str(), w.window_id.as_str()))
+            .collect::<Vec<_>>()
+    );
+
+    if let Some(blast_pos) = hitbox_transform_for_window(&mut t, "blast") {
+        assert!(
+            (blast_pos - ended.position).length() < 0.2,
+            "explosion spawns at the bolt's fuse-out position, got {blast_pos:?} vs {:?}",
+            ended.position
+        );
+    }
+}
+
+/// `fireball` carries an `on_impact` condition naming a skill with NO registered timeline — the
+/// v1 validation error `is_invalid_lifecycle_target` flags. Runtime behavior: warn and skip —
+/// this test can't observe the `warn!` itself (no log capture in the harness), so it asserts the
+/// externally-observable half: nothing spawns for the missing target, and nothing panics.
+/// `ghost_explosion` must be a REAL skill in the registry (stat_core's load-time
+/// `validate_skill_trigger_references` rejects an unknown `trigger_skill` outright) — the point
+/// under test is narrower: a real skill with no registered `CastTimeline`.
+#[test]
+fn lifecycle_condition_with_no_timeline_warns_and_skips() {
+    let toml = r#"
+[[skills]]
+id = "fireball"
+name = "Fireball"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 5.0
+[[skills.conditions]]
+trigger_skill = "ghost_explosion"
+type = "on_impact"
+additional = true
+[skills.damage]
+base_damages = [{ type = "fire", min = 20.0, max = 20.0 }]
+
+[[skills]]
+id = "ghost_explosion"
+name = "Ghost Explosion"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "fire", min = 15.0, max = 15.0 }]
+"#;
+    let mut t = ObeliskTestApp::new(32);
+    let skills = stat_core::config::parse_skills(toml).unwrap();
+    t.app
+        .world_mut()
+        .resource_mut::<SkillRegistry>()
+        .0
+        .extend(skills);
+    let bolt_handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .add(fireball_bolt_timeline());
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("fireball".into(), bolt_handle);
+    // "ghost_explosion" IS a real registry skill (required by load-time validation) but is
+    // deliberately never registered in `CastTimelineHandles` — exactly the invalid shape
+    // `is_invalid_lifecycle_target` flags.
+
+    let player = t
+        .app
+        .world_mut()
+        .spawn((
+            Combatant,
+            Attributes(make_block("player", 100.0, 100.0)),
+            Faction::Player,
+            ObeliskId("player".into()),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ))
+        .id();
+    t.app.update();
+
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir("fireball", Dir3::X);
+    t.advance_ticks(10);
+
+    let hitbox = t
+        .app
+        .world_mut()
+        .query_filtered::<Entity, With<Hitbox>>()
+        .single(t.app.world())
+        .expect("bolt hitbox in flight");
+    t.app.world_mut().trigger(HitboxWorldHit {
+        hitbox,
+        position: Vec3::new(1.2, 0.0, 0.0),
+    });
+
+    // Must not panic, and nothing spawns for the missing-timeline target.
+    t.advance_ticks(10);
+
+    let rec = t.rec();
+    assert!(
+        rec.hitbox_ended
+            .iter()
+            .any(|e| e.window_id == "bolt" && e.reason == EndReason::HitWorld),
+        "the bolt itself still ends normally despite the invalid lifecycle target"
+    );
+    assert!(
+        rec.hit_window_opened
+            .iter()
+            .all(|w| w.skill_id != "ghost_explosion"),
+        "an invalid lifecycle target must never spawn anything, got {:?}",
+        rec.hit_window_opened
+            .iter()
+            .map(|w| w.skill_id.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Direct unit coverage of `is_invalid_lifecycle_target` (mirrors
+/// `timeline_target_condition_requires_additional_true`'s coverage of `is_invalid_timeline_target`
+/// above): flags a Lifecycle condition (`OnImpact`/`OnExpire`) iff its `trigger_skill` has no
+/// registered timeline; a non-Lifecycle condition is out of scope regardless of the timeline
+/// registration.
+#[test]
+fn is_invalid_lifecycle_target_flags_missing_timeline_only() {
+    let (t, _player, _dummy) =
+        harness_with_fireball_lifecycle_pair(33, Vec3::new(100.0, 0.0, 100.0));
+    let handles = t.app.world().resource::<CastTimelineHandles>();
+
+    let registered = SkillCondition {
+        trigger_skill: "fireball_explosion".into(),
+        additional: true,
+        condition: TriggerCondition::OnImpact,
+    };
+    assert!(
+        !is_invalid_lifecycle_target(&registered, handles),
+        "a Lifecycle condition naming a registered timeline is valid"
+    );
+
+    let missing = SkillCondition {
+        trigger_skill: "ghost_explosion".into(),
+        additional: true,
+        condition: TriggerCondition::OnExpire,
+    };
+    assert!(
+        is_invalid_lifecycle_target(&missing, handles),
+        "a Lifecycle condition naming a skill with no registered timeline must be flagged invalid"
+    );
+
+    let non_lifecycle_missing = SkillCondition {
+        trigger_skill: "ghost_explosion".into(),
+        additional: true,
+        condition: TriggerCondition::Always,
+    };
+    assert!(
+        !is_invalid_lifecycle_target(&non_lifecycle_missing, handles),
+        "a non-Lifecycle condition is out of scope for this predicate, even with a missing timeline"
+    );
 }
