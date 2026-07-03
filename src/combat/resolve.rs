@@ -31,6 +31,25 @@ pub struct HitOutcome {
     /// (a distinct `TriggerFired` plus `DamageResolved`), instead of summing them into the primary
     /// `total_damage`. These are NOT effect triggers (`triggered`) and are NEVER re-resolved.
     pub triggered_skill_hits: Vec<TriggeredSkillHit>,
+    /// The primary (non-triggered) `DamagePacket`, cloned AFTER packet construction + charge
+    /// scaling but BEFORE `resolve_damage_with_triggers` consumes it — i.e. pre-mitigation. Obelisk
+    /// post-calc `TriggerCondition`s (e.g. `DamageOverThreshold`) compare against this raw packet,
+    /// not the post-mitigation `total_damage` aggregate above. The primary is the first
+    /// non-`is_triggered` packet in `skill_result.packets` (mirrors the primary/secondary split
+    /// this fn already performs against `CombatResult::is_triggered`, which is itself copied
+    /// straight from `DamagePacket::is_triggered`). Degenerate cases, observational only: if every
+    /// packet this skill produced is itself a triggered secondary, falls back to the first packet;
+    /// if the skill produced no packets at all (a pure self-buff/self-effect skill), falls back to
+    /// an empty placeholder packet (zero damages) rather than fabricating damage.
+    pub primary_packet: stat_core::DamagePacket,
+    /// Snapshot of the attacker, taken at fn entry BEFORE `use_skill_against` mutates it (mana
+    /// spend, self-effects, etc). Obelisk pre-calc `TriggerCondition`s (e.g. `PlayerFullMana`)
+    /// must evaluate against this pre-mutation state, not the post-hit `caster`.
+    pub attacker_before: StatBlock,
+    /// Snapshot of the defender, taken at fn entry BEFORE any resolution mutates it. Obelisk
+    /// pre-calc `TriggerCondition`s (e.g. `TargetLowLife`) must evaluate against this pre-hit
+    /// state, not the post-hit `target`.
+    pub defender_before: StatBlock,
 }
 
 /// A skill-condition-triggered secondary hit, projected straight off the already-resolved
@@ -106,10 +125,17 @@ pub fn resolve_one_hit_charged(
     charge: Option<u8>,
 ) -> Result<HitOutcome, SkillUseError> {
     let source_id = caster.id.clone();
+    // Pre-hit snapshots for obelisk-side TriggerCondition evaluation (Task 5/6): taken here, before
+    // ANYTHING below mutates `caster` or `target`. Purely observational — never read by resolution
+    // math in this fn.
+    let attacker_before = caster.clone();
     // use_skill_against needs &mut caster + &target simultaneously: snapshot the target.
     let target_snapshot = target.clone();
     let mut skill_result =
         caster.use_skill_against(Some(&target_snapshot), skill, registry, source_id, rng)?;
+    // `target_snapshot` was only borrowed above (never mutated) — move it into the outcome snapshot
+    // rather than cloning again.
+    let defender_before = target_snapshot;
 
     // Charge multiplier: a no-op for the default `None` path (packets untouched). Only when a charge
     // is present do we scale the produced packets' damage magnitudes — a stronger bolt — before the
@@ -122,6 +148,17 @@ pub fn resolve_one_hit_charged(
             }
         }
     }
+
+    // Snapshot the primary (pre-mitigation) packet AFTER packet construction + charge scaling but
+    // BEFORE `resolve_damage_with_triggers` consumes it below. See `HitOutcome::primary_packet` doc
+    // for the degenerate-case fallbacks. Observational only — never fed back into resolution math.
+    let primary_packet = skill_result
+        .packets
+        .iter()
+        .find(|p| !p.is_triggered)
+        .or_else(|| skill_result.packets.first())
+        .cloned()
+        .unwrap_or_else(|| stat_core::DamagePacket::new(caster.id.clone(), skill.id.clone()));
 
     // Resolve the produced packets against the live target (deterministic, seeded).
     let tr =
@@ -196,6 +233,9 @@ pub fn resolve_one_hit_charged(
         mana_gained,
         triggered,
         triggered_skill_hits,
+        primary_packet,
+        attacker_before,
+        defender_before,
     })
 }
 
@@ -447,6 +487,54 @@ base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
             "defender should have taken 30 + 37.5 = 67.5 (life 200 -> 132.5), got {}",
             target.current_life
         );
+    }
+
+    /// Task 4: `HitOutcome` must expose the primary (pre-mitigation) `DamagePacket` plus pre-hit
+    /// attacker/defender snapshots, so a later obelisk-side `TriggerConditionEval` can compare
+    /// pre-calc conditions against pre-mutation state and post-calc conditions (e.g.
+    /// `DamageOverThreshold`) against the raw packet rather than the post-mitigation aggregate.
+    #[test]
+    fn hit_outcome_exposes_packet_and_pre_hit_snapshots() {
+        stat_core::config::ensure_constants_initialized();
+        let registry = firebolt_registry();
+        let skill = registry.get("firebolt").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 50.0;
+        target.current_life = 50.0;
+        let life_before = target.current_life;
+        let mana_before = caster.current_mana;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let outcome =
+            resolve_one_hit_charged(&mut caster, &mut target, skill, &registry, &mut rng, None)
+                .unwrap();
+
+        assert!(
+            outcome
+                .primary_packet
+                .damages
+                .iter()
+                .map(|d| d.amount)
+                .sum::<f64>()
+                > 0.0,
+            "primary_packet must carry the firebolt's raw pre-mitigation damage"
+        );
+        assert_eq!(
+            outcome.defender_before.current_life, life_before,
+            "defender_before snapshot must be PRE-hit, not the post-hit `target`"
+        );
+        assert_eq!(
+            outcome.attacker_before.current_mana, mana_before,
+            "attacker_before snapshot must be PRE-cast, not the post-cast `caster` (mana already spent)"
+        );
+        // Confirm the snapshots are genuinely distinct from the post-hit state (proves they were
+        // taken before mutation, not aliased references to the same data).
+        assert!(target.current_life < outcome.defender_before.current_life);
+        assert!(caster.current_mana < outcome.attacker_before.current_mana);
     }
 
     #[test]
