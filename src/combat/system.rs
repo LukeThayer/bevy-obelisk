@@ -1,13 +1,15 @@
+use crate::assets::CastTimelineHandles;
 use crate::combat::resolve::{
     combat_result_life_gained, combat_result_mana_gained, combat_result_prevented,
-    resolve_one_hit_charged,
+    resolve_one_hit_charged, HitOutcome,
 };
 use crate::core::components::Attributes;
 use crate::core::config::{CombatRng, SkillRegistry};
 use crate::events::{DamageResolved, EffectApplied, EntityDied, HitConfirmed, TriggerFired};
+use crate::timeline::triggered::{execute_skill_timeline, ExecPayload};
 use bevy::prelude::*;
 use stat_core::combat::resolve_damage_with_rng;
-use stat_core::Skill;
+use stat_core::{ConditionPhase, Skill, SkillCondition, TriggerCondition, TriggerConditionEval};
 
 /// Hard cap on the number of triggered-effect resolutions processed for a single hit.
 /// Bounds any pathological re-entrant cascade (defensive — damage resolution does not itself
@@ -25,11 +27,99 @@ fn is_free_hit(ev: &HitConfirmed) -> bool {
 
 /// A clone of `s` with `mana_cost` zeroed — handed to `resolve_one_hit_charged` for free hits so
 /// `consume_skill_resources` charges nothing (and never fizzles on insufficient mana). Also the
-/// site Task 7's condition stripping will extend — one clone, two edits.
+/// site Task 7's condition stripping extends — one clone, two edits.
 fn free_clone(s: &Skill) -> Skill {
     let mut c = s.clone();
     c.mana_cost = 0.0;
     c
+}
+
+/// True when `cond` names a skill that has a registered timeline (Task 6/7: it will be executed
+/// SPATIALLY via `execute_skill_timeline`, never resolved as an inline packet) but is marked
+/// `additional = false`. That combination is a content-authoring bug: `additional = false` means
+/// "replace the primary packet" — a request stat_core can only honor for a packet it actually
+/// resolves, but a timeline-target condition is stripped from the resolve clone before it ever
+/// reaches stat_core (see `partition_conditions`), so `additional` has NO code effect in the
+/// timeline branch either way. The load-time home for this check
+/// (`stat_core::config::skills::validate_skill_trigger_references`'s sibling on the obelisk-bevy
+/// side, `core/config.rs::add_obelisk_skills`) can't see it — see `partition_conditions` doc for
+/// why — so it is caught here, at the partition site, instead. Pure predicate (no `warn!`) so it
+/// stays cheaply unit-testable without asserting on log output. `pub` (like
+/// `execute_skill_timeline`/`ExecPayload`, Task 6) so `tests/triggered_exec.rs` can exercise the
+/// v1 validation directly, in its honest (runtime, not load-time) form.
+pub fn is_invalid_timeline_target(cond: &SkillCondition, handles: &CastTimelineHandles) -> bool {
+    handles.0.contains_key(&cond.trigger_skill) && !cond.additional
+}
+
+/// Splits `conditions` into (timeline-target, packet) buckets by whether `trigger_skill` has a
+/// registered `CastTimeline` handle:
+///   - timeline-target: Task 6's skill B has its own timeline. `on_hit_confirmed` strips these
+///     from the clone handed to `resolve_one_hit_charged` (skill A's hit resolves WITHOUT B's
+///     packet folded in) and, post-resolve, evaluates each against the widened `HitOutcome`
+///     (`eval_condition_obelisk_side`) — a match executes B's timeline SPATIALLY at the hit
+///     position (Task 7, "the fireball moment").
+///   - packet: untouched legacy path — resolved inline by stat_core exactly as today.
+///
+/// Load-order note: this can't be a load-time validation (`add_obelisk_skills`) because
+/// `CastTimelineHandles` isn't populated until AFTER skills load — `run_scenario` (and
+/// `ObeliskTestApp`) call `add_obelisk_skills` up front, then stream `.cast.ron` assets in and
+/// register their handles only once loaded (see `scenario/run.rs::run_scenario`). A skill-load-
+/// time check would see an empty `CastTimelineHandles` and could never catch a real misuse. Any
+/// `additional = false` timeline-target condition found here is a content bug (see
+/// `is_invalid_timeline_target`); `on_hit_confirmed` warns and treats it as additional regardless
+/// (harmless, since `additional` never reaches stat_core for a stripped condition). `pub` for the
+/// same external-test reason as `is_invalid_timeline_target`.
+pub fn partition_conditions(
+    conditions: &[SkillCondition],
+    handles: &CastTimelineHandles,
+) -> (Vec<SkillCondition>, Vec<SkillCondition>) {
+    let mut timeline_targets = Vec::new();
+    let mut packet_conditions = Vec::new();
+    for cond in conditions {
+        if handles.0.contains_key(&cond.trigger_skill) {
+            timeline_targets.push(cond.clone());
+        } else {
+            packet_conditions.push(cond.clone());
+        }
+    }
+    (timeline_targets, packet_conditions)
+}
+
+/// Obelisk-side evaluation of a hit-phase `TriggerCondition` naming a TIMELINE-target skill,
+/// against the widened `HitOutcome` (Task 4's seam). Dispatches by `TriggerCondition::phase()` to
+/// the matching `TriggerConditionEval` method, feeding it the closest `HitOutcome` equivalent:
+///
+///   - `PreCalculation`  -> `evaluate_pre(attacker_before, defender_before)` — the pre-hit,
+///     pre-mutation snapshots (e.g. `Always`, `TargetLowLife`).
+///   - `PostCalculation` -> `evaluate_post_calc(primary_packet)` — the raw, pre-mitigation primary
+///     packet (e.g. `OnCrit`, `DamageOverThreshold`).
+///   - `PostResolution`  -> hand-mapped against `HitOutcome` scalars, since `HitOutcome` does NOT
+///     retain a stat_core `CombatResult` (Task 4 review finding): `OnKill` -> `is_killing_blow`
+///     (the one PostResolution field `HitOutcome` genuinely carries). `OnOverkill` /
+///     `OnBarrierBroken` need result fields `HitOutcome` doesn't surface — v1: always false
+///     (documented gap, not a silent bug) rather than widening `HitOutcome` further in this task.
+///   - `DefensiveResolution` -> always false. These are RECEIVER-side procs (`OnDamageTaken`,
+///     `OnDodge`, etc. — evaluated by `resolve_damage_with_triggers`'s target-side triggered-
+///     effect path against the hit the target is ABSORBING), never an attacker's own hit-
+///     condition phase; there is no defined mapping for this integration.
+///   - `Lifecycle` -> always false. `OnImpact` / `OnExpire` are the spatial layer's job (window
+///     end events, Task 8+), never evaluated during hit resolution.
+fn eval_condition_obelisk_side(cond: &TriggerCondition, out: &HitOutcome) -> bool {
+    match cond.phase() {
+        ConditionPhase::PreCalculation => {
+            cond.evaluate_pre(&out.attacker_before, &out.defender_before)
+        }
+        ConditionPhase::PostCalculation => cond.evaluate_post_calc(&out.primary_packet),
+        ConditionPhase::PostResolution => match cond {
+            TriggerCondition::OnKill => out.is_killing_blow,
+            // v1: not yet surfaced — HitOutcome doesn't retain the CombatResult fields
+            // (barrier_before/after, life_after) these need; do NOT widen HitOutcome here.
+            TriggerCondition::OnOverkill { .. } | TriggerCondition::OnBarrierBroken => false,
+            _ => false,
+        },
+        ConditionPhase::DefensiveResolution => false,
+        ConditionPhase::Lifecycle => false,
+    }
 }
 
 /// Observer: when a hit is confirmed, run the deterministic resolve funnel and emit results.
@@ -37,6 +127,7 @@ pub fn on_hit_confirmed(
     hit: On<HitConfirmed>,
     mut attrs: Query<&mut Attributes>,
     registry: Res<SkillRegistry>,
+    handles: Res<CastTimelineHandles>,
     mut rng: ResMut<CombatRng>,
     mut commands: Commands,
 ) {
@@ -51,13 +142,39 @@ pub fn on_hit_confirmed(
         Err(_) => return, // same entity or missing
     };
 
+    // Task 7: split skill A's conditions into timeline-target (skill B has its own timeline —
+    // strip from the resolve clone, execute B spatially post-resolve) vs packet (untouched
+    // legacy path). See `partition_conditions` doc for the load-order reasoning and
+    // `is_invalid_timeline_target` for the `additional = false` content-bug check.
+    let (timeline_targets, packet_conditions) = partition_conditions(&skill.conditions, &handles);
+    for cond in &timeline_targets {
+        if is_invalid_timeline_target(cond, &handles) {
+            warn!(
+                "skill '{}' condition triggers timeline skill '{}' with additional = false — \
+                 timeline-target conditions must be additional = true (v1); treating as \
+                 additional (a stripped condition never reaches stat_core's resolve either way)",
+                ev.skill_id, cond.trigger_skill
+            );
+        }
+    }
+
     // The billing rule (spec §3.2): free hits (triggered sub-casts, chain re-strikes) resolve
     // against a mana-zeroed clone so they never bill or fizzle; the paid (hot) path keeps passing
-    // the registry `&Skill` straight through — no clone.
-    let owned_free_skill;
-    let skill_for_resolve: &Skill = if is_free_hit(&ev) {
-        owned_free_skill = free_clone(skill);
-        &owned_free_skill
+    // the registry `&Skill` straight through — no clone. Task 7 extends this: ANY hit with a
+    // timeline-target condition also needs a clone (to strip those conditions before resolve),
+    // even on the paid path — the no-clone fast path is kept exactly when neither applies.
+    let owned_clone_skill;
+    let skill_for_resolve: &Skill = if is_free_hit(&ev) || !timeline_targets.is_empty() {
+        let mut c = if is_free_hit(&ev) {
+            free_clone(skill)
+        } else {
+            skill.clone()
+        };
+        if !timeline_targets.is_empty() {
+            c.conditions = packet_conditions.clone();
+        }
+        owned_clone_skill = c;
+        &owned_clone_skill
     } else {
         skill
     };
@@ -101,6 +218,36 @@ pub fn on_hit_confirmed(
             target: ev.target,
             killer: Some(ev.caster),
         });
+    }
+
+    // Task 7 — "the fireball moment": timeline-target skill conditions (stripped from
+    // `skill_for_resolve` above, so stat_core never resolved them as an inline packet). Evaluate
+    // each against the widened `HitOutcome` (`eval_condition_obelisk_side`); a match executes B's
+    // own timeline SPATIALLY at the hit position, one trigger-depth deeper. Must run BEFORE the
+    // `outcome.triggered` worklist below, which moves that field out of `outcome` — this block
+    // needs the whole struct (`primary_packet` / `attacker_before` / `defender_before` /
+    // `is_killing_blow`) still intact. `execute_skill_timeline` itself enforces
+    // `MAX_TRIGGER_DEPTH` (warns + drops at the cap) — not re-checked here, one source of truth.
+    for cond in &timeline_targets {
+        if eval_condition_obelisk_side(&cond.condition, &outcome) {
+            execute_skill_timeline(
+                &mut commands,
+                ev.caster,
+                &cond.trigger_skill,
+                ExecPayload {
+                    position: ev.position,
+                    // `HitConfirmed` carries no direction/facing. A neutral default: Task 9's
+                    // authored anchors make direction mostly irrelevant for CastPoint-style
+                    // windows (the common shape for a triggered explosion); a future task that
+                    // triggers a DIRECTIONAL timeline (a projectile, a cone) off a hit will need
+                    // a real facing and should extend `HitConfirmed` rather than guess here.
+                    direction: Vec3::X,
+                    target: Some(ev.target),
+                    charge: ev.charge,
+                    depth: ev.depth.saturating_add(1),
+                },
+            );
+        }
     }
 
     // Skill-condition damage triggers (e.g. an `on_crit` condition naming a `trigger_skill`):
@@ -251,6 +398,7 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
         app.add_observer(on_hit_confirmed);
         app.insert_resource(SkillRegistry(registry));
         app.insert_resource(CombatRng(ChaCha8Rng::seed_from_u64(5)));
+        app.init_resource::<CastTimelineHandles>();
 
         // Recorder for TriggerFired (the EventRecorder in testkit doesn't cover this event).
         let fired: Arc<Mutex<Vec<TriggerFired>>> = Arc::new(Mutex::new(Vec::new()));

@@ -537,6 +537,130 @@ base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
         assert!(caster.current_mana < outcome.attacker_before.current_mana);
     }
 
+    /// Task 4 review finding: `primary_packet`'s "every packet is triggered" fallback
+    /// (`.find(|p| !p.is_triggered).or_else(|| skill_result.packets.first())`). A REPLACING
+    /// condition (`additional = false`, the default) drops the primary packet entirely — every
+    /// packet `calculate_damage_with_triggers` produces for this hit is `is_triggered = true` — so
+    /// `.find` finds nothing and the fallback must pick the first (only) packet rather than
+    /// silently returning an empty one.
+    #[test]
+    fn primary_packet_falls_back_to_first_packet_when_every_packet_is_triggered() {
+        stat_core::config::ensure_constants_initialized();
+        let toml = r#"
+[[skills]]
+id = "replacer"
+name = "Replacer"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
+[[skills.conditions]]
+trigger_skill = "static_discharge"
+type = "always"
+additional = false
+
+[[skills]]
+id = "static_discharge"
+name = "Static Discharge"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
+"#;
+        let registry = stat_core::config::parse_skills(toml).unwrap();
+        let skill = registry.get("replacer").unwrap();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 200.0;
+        target.current_life = 200.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, skill, &registry, &mut rng).unwrap();
+
+        assert_eq!(
+            outcome.primary_packet.skill_id, "static_discharge",
+            "additional=false replaces the primary — every produced packet is triggered, so \
+             primary_packet must fall back to the first (only, triggered) packet, got {:?}",
+            outcome.primary_packet
+        );
+        assert!(
+            outcome.primary_packet.total_damage() > 0.0,
+            "the fallback packet must carry the real triggered damage, not a fabricated zero"
+        );
+    }
+
+    /// Task 4 review finding: `primary_packet`'s "zero packets at all" fallback
+    /// (`.unwrap_or_else(|| DamagePacket::new(...))`, an empty placeholder). The only way
+    /// `calculate_damage_with_triggers` produces zero packets for a targeted attack: a REPLACING
+    /// condition (`additional = false`) matches (dropping the primary) but its `trigger_skill`
+    /// isn't in the `registry` passed to resolve, so no triggered packet gets built either —
+    /// simulated here by removing the trigger target from the registry AFTER
+    /// `validate_skill_trigger_references` has already accepted it at parse time (a live
+    /// registry desync, not something `parse_skills` alone could ever produce).
+    #[test]
+    fn primary_packet_falls_back_to_placeholder_when_no_packets_are_produced() {
+        stat_core::config::ensure_constants_initialized();
+        let toml = r#"
+[[skills]]
+id = "ghost_caster"
+name = "Ghost Caster"
+tags = ["attack", "physical", "melee"]
+targeting = "single_enemy"
+delivery = "melee"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "physical", min = 10.0, max = 10.0 }]
+[[skills.conditions]]
+trigger_skill = "unregistered_ghost"
+type = "always"
+additional = false
+
+[[skills]]
+id = "unregistered_ghost"
+name = "Unregistered Ghost"
+tags = ["spell", "lightning"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
+"#;
+        let mut registry = stat_core::config::parse_skills(toml).unwrap();
+        registry.remove("unregistered_ghost");
+        let skill = registry.get("ghost_caster").unwrap().clone();
+
+        let mut caster = StatBlock::with_id("player");
+        caster.max_mana.base = 100.0;
+        caster.current_mana = 100.0;
+        let mut target = StatBlock::with_id("dummy");
+        target.max_life.base = 200.0;
+        target.current_life = 200.0;
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let outcome =
+            resolve_one_hit(&mut caster, &mut target, &skill, &registry, &mut rng).unwrap();
+
+        assert_eq!(
+            outcome.primary_packet.skill_id, "ghost_caster",
+            "zero packets produced must fall back to the documented empty placeholder \
+             (source skill's own id), not fabricate damage, got {:?}",
+            outcome.primary_packet
+        );
+        assert_eq!(
+            outcome.primary_packet.total_damage(),
+            0.0,
+            "the placeholder must carry zero damage"
+        );
+    }
+
     #[test]
     fn burn_is_applied_and_ticks_down_life() {
         crate::testkit::init_test_obelisk();
