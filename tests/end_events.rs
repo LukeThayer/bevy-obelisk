@@ -41,9 +41,11 @@ fn window(id: &str, phase: WindowPhase, motion: VolumeMotion, duration: f32) -> 
         active_duration: duration,
         shape: CollisionShape::Sphere { radius: 0.5 },
         motion,
+        motion_direction: Default::default(),
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::FirstOnly,
         rehit_interval: None,
+        emitter: None,
     }
 }
 

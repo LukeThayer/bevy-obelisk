@@ -36,9 +36,11 @@ fn beam_window(id: &str, phase: WindowPhase) -> CollisionWindow {
         active_duration: 0.1,
         shape: CollisionShape::Sphere { radius: 0.3 },
         motion: VolumeMotion::Beam,
+        motion_direction: Default::default(),
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::FirstOnly,
         rehit_interval: None,
+        emitter: None,
     }
 }
 

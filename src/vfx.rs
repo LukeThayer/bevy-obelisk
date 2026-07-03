@@ -74,6 +74,13 @@ fn cue_on_cast(
     }
 }
 
+/// Fires the window-open cue for a spawned hitbox. A NON-emitted window (the phase schedule or
+/// a triggered execution) fires `on_window_{window_id}` -> `CueKind::OnWindow`; an emitted
+/// instance (Task 11 — `Hitbox.emitted` / `HitWindowOpened.emitted`) fires `emit_{window_id}` ->
+/// `CueKind::OnEmit` INSTEAD — never both, and never the wrong one: which slot is looked up is
+/// decided ENTIRELY by `e.emitted`, so an emitted instance structurally cannot fire the ordinary
+/// window-open cue even if content authors BOTH slots for the same window id (spec §3.2: emit
+/// only).
 fn cue_on_window(
     ev: On<HitWindowOpened>,
     handles: Res<CastTimelineHandles>,
@@ -83,7 +90,11 @@ fn cue_on_window(
     mut commands: Commands,
 ) {
     let e = ev.event();
-    let slot = format!("on_window_{}", e.window_id);
+    let (slot, kind) = if e.emitted {
+        (format!("emit_{}", e.window_id), CueKind::OnEmit)
+    } else {
+        (format!("on_window_{}", e.window_id), CueKind::OnWindow)
+    };
     if let Some(cue_id) = cue_for(&handles, &timelines, &e.skill_id, &slot) {
         let origin = transforms
             .get(e.hitbox)
@@ -107,7 +118,7 @@ fn cue_on_window(
             source: e.caster,
             position,
             position_from,
-            kind: CueKind::OnWindow,
+            kind,
         });
     }
 }

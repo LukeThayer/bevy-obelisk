@@ -100,10 +100,19 @@ pub struct CollisionWindow {
     pub shape: CollisionShape,
     #[serde(default)]
     pub motion: VolumeMotion,
+    /// Overrides `motion`'s launch direction (Task 11, spec §3.2 — see [`MotionDirection`]).
+    /// Defaults to `Inherit`, so every pre-Task-11 window is byte-for-byte unaffected.
+    #[serde(default)]
+    pub motion_direction: MotionDirection,
     pub hit_filter: HitFilter,
     pub hit_mode: HitMode,
     #[serde(default)]
     pub rehit_interval: Option<f32>,
+    /// Rains one instance of a `Template` window on a dedicated clock while a hitbox spawned
+    /// from THIS window is alive (Task 11, spec §3.2 — see [`Emitter`]). `None` (the default) =
+    /// no emission; every pre-Task-11 window omits this and is unaffected.
+    #[serde(default)]
+    pub emitter: Option<Emitter>,
 }
 
 fn default_true() -> bool {
@@ -173,6 +182,38 @@ pub enum VolumeMotion {
     Beam,
 }
 
+/// Rains one instance of a `Template` window from a live hitbox on a dedicated clock (Task 11,
+/// spec §3.2): every `1/rate` seconds, spawn ONE instance of the `Template` window named
+/// `window` at the emitting hitbox's current position plus an xz-disc jitter offset (radius
+/// `jitter`, sampled from the dedicated `SpawnRng` stream — never `CombatRng`). Validated by
+/// `validate_timeline`: `window` must name an existing `Template` window; every `Template`
+/// window must be referenced by at least one emitter; a `Template` window may not itself carry
+/// an emitter (recursion guard); `rate` must be `> 0.0` and `jitter` must be `>= 0.0`.
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
+pub struct Emitter {
+    /// Spawns per second (the emission period is `1.0 / rate` seconds).
+    pub rate: f32,
+    /// xz-disc jitter radius (world units), uniform-area sampled from `SpawnRng`.
+    pub jitter: f32,
+    /// Id of the `Template` window to instantiate.
+    pub window: String,
+}
+
+/// Overrides a window's `VolumeMotion` launch direction (Task 11, spec §3.2) — authored ON the
+/// window whose direction is overridden (typically an emitted `Template`, e.g. a blizzard
+/// shard's Down motion; nothing stops authoring it on a scheduled window too).
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum MotionDirection {
+    /// Keep the motion's normal direction: the spawning cast/execution's aim, or (for an
+    /// emitted instance) the emitting hitbox's `aim`. The default — every pre-Task-11 window is
+    /// unaffected.
+    #[default]
+    Inherit,
+    /// Launch straight down (`-Y`) at the motion's authored `speed`, regardless of aim — a
+    /// shard falling out of the sky rather than following the caster's facing.
+    Down,
+}
+
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HitFilter {
     Caster,
@@ -231,17 +272,70 @@ pub enum CastLoadError {
 
 /// Timeline validation, v2. The v1 chain-graph rules died with the authored `on_end` reaction
 /// schema; what remains to check today:
-/// - a `Template` window must be referenced by an emitter — emitters land in Task 11, so until
-///   then ANY `Template` window is an error (validation stays honest at every commit).
+/// - (Task 11) every `Emitter.window` must name a window that EXISTS and is `Template` — a
+///   scheduled/non-existent emitter target would silently spawn nothing at runtime.
+/// - (Task 11) every `Template` window must be referenced by at least one emitter — an
+///   unreferenced `Template` window can never spawn (it's off every schedule by definition),
+///   which is always an authoring mistake.
+/// - (Task 11) a `Template` window may not itself carry an `emitter` (spec §3.2's
+///   Template→Template recursion guard) — emission is a property of the window that's ALIVE and
+///   ticking, and a `Template` window is never itself alive on its own (it only exists once
+///   instantiated), so an emitter authored there could never tick.
+/// - (Task 11) `Emitter::rate` must be `> 0.0` (a non-positive rate can never cross an emission
+///   boundary — or divides by zero) and `Emitter::jitter` must be `>= 0.0` (a negative disc
+///   radius is nonsensical).
 /// - (Task 10) a `WindowAnchor::CastPoint` window must be reachable from a timeline whose
 ///   `acquisition` can actually produce a cast point — otherwise the window would silently fall
 ///   back to the caster's position at spawn time, masking an authoring mistake.
 pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
+    let mut referenced: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for w in &tl.collision_windows {
+        let Some(em) = &w.emitter else { continue };
+        // Recursion guard (spec §3.2): a Template window may not itself carry an emitter — it
+        // only exists to BE instantiated, never to instantiate something else.
         if w.spawn == WindowSpawn::Template {
             return Err(format!(
-                "window '{}' is a Template, but nothing can reference a Template window yet \
-                 (emitters land in Task 11)",
+                "window '{}' is a Template and may not itself carry an emitter (spec §3.2 \
+                 Template->Template recursion guard)",
+                w.id
+            ));
+        }
+        if em.rate <= 0.0 {
+            return Err(format!(
+                "window '{}' emitter rate must be > 0.0, got {}",
+                w.id, em.rate
+            ));
+        }
+        if em.jitter < 0.0 {
+            return Err(format!(
+                "window '{}' emitter jitter must be >= 0.0, got {}",
+                w.id, em.jitter
+            ));
+        }
+        match tl.collision_windows.iter().find(|t| t.id == em.window) {
+            None => {
+                return Err(format!(
+                    "window '{}' emitter targets unknown window '{}'",
+                    w.id, em.window
+                ))
+            }
+            Some(target) if target.spawn != WindowSpawn::Template => {
+                return Err(format!(
+                    "window '{}' emitter targets window '{}', which is not a Template \
+                     (spawn: {:?}) — an emitter may only instantiate a Template window",
+                    w.id, em.window, target.spawn
+                ))
+            }
+            Some(_) => {
+                referenced.insert(em.window.as_str());
+            }
+        }
+    }
+    for w in &tl.collision_windows {
+        if w.spawn == WindowSpawn::Template && !referenced.contains(w.id.as_str()) {
+            return Err(format!(
+                "window '{}' is a Template but is never referenced by an emitter — it can \
+                 never spawn",
                 w.id
             ));
         }
@@ -296,6 +390,8 @@ impl Plugin for ObeliskAssetsPlugin {
             .register_type::<WindowPhase>()
             .register_type::<CollisionShape>()
             .register_type::<VolumeMotion>()
+            .register_type::<MotionDirection>()
+            .register_type::<Emitter>()
             .register_type::<HitFilter>()
             .register_type::<HitMode>();
     }
@@ -318,13 +414,15 @@ mod tests {
             active_duration: 1.0,
             shape: CollisionShape::Sphere { radius: 0.5 },
             motion: VolumeMotion::Static,
+            motion_direction: MotionDirection::Inherit,
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
+            emitter: None,
         }
     }
 
-    fn timeline_with(win: CollisionWindow) -> CastTimeline {
+    fn timeline_with_windows(wins: Vec<CollisionWindow>) -> CastTimeline {
         CastTimeline {
             skill_id: "test".into(),
             phase_durations: PhaseDurations {
@@ -332,10 +430,14 @@ mod tests {
                 active: 0.1,
                 recovery: 0.1,
             },
-            collision_windows: vec![win],
+            collision_windows: wins,
             acquisition: Acquisition::default(),
             vfx_cues: Default::default(),
         }
+    }
+
+    fn timeline_with(win: CollisionWindow) -> CastTimeline {
+        timeline_with_windows(vec![win])
     }
 
     #[test]
@@ -418,26 +520,129 @@ mod tests {
                 offset: 0.0
             }
         );
+        assert!(w.emitter.is_none(), "emitter defaults to None");
+        assert_eq!(
+            w.motion_direction,
+            MotionDirection::Inherit,
+            "motion_direction defaults to Inherit"
+        );
     }
 
-    /// Until emitters land (Task 11) nothing can reference a `Template` window, so authoring
-    /// one is a validation error — validation stays honest at every commit.
-    #[test]
-    fn template_windows_are_rejected_until_emitters_land() {
-        let tl = timeline_with(CollisionWindow {
+    fn template_window(id: &str) -> CollisionWindow {
+        CollisionWindow {
             spawn: WindowSpawn::Template,
-            ..basic_window("tpl")
-        });
-        let err = validate_timeline(&tl).unwrap_err();
-        assert!(
-            err.contains("Template") && err.contains("tpl"),
-            "error names the offending window: {err}"
-        );
+            ..basic_window(id)
+        }
+    }
+
+    fn emitting_window(id: &str, target: &str) -> CollisionWindow {
+        CollisionWindow {
+            emitter: Some(Emitter {
+                rate: 2.0,
+                jitter: 1.0,
+                window: target.into(),
+            }),
+            ..basic_window(id)
+        }
     }
 
     #[test]
     fn scheduled_windows_validate() {
         assert!(validate_timeline(&timeline_with(basic_window("w"))).is_ok());
+    }
+
+    /// (Task 11) A `Template` window referenced by exactly one emitter validates — the happy
+    /// path every blizzard-style timeline needs.
+    #[test]
+    fn template_window_referenced_by_emitter_validates() {
+        let tl = timeline_with_windows(vec![
+            emitting_window("storm", "shard"),
+            template_window("shard"),
+        ]);
+        assert!(
+            validate_timeline(&tl).is_ok(),
+            "{:?}",
+            validate_timeline(&tl)
+        );
+    }
+
+    /// (Task 11) An emitter naming a window id that doesn't exist anywhere in the timeline is a
+    /// validation error naming both windows.
+    #[test]
+    fn emitter_targeting_unknown_window_fails_validation() {
+        let tl = timeline_with_windows(vec![emitting_window("storm", "ghost")]);
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("storm") && err.contains("ghost") && err.contains("unknown"),
+            "error names both windows: {err}"
+        );
+    }
+
+    /// (Task 11) An emitter naming a window that EXISTS but isn't `Template` (e.g. a scheduled
+    /// window) is a validation error — an emitter may only instantiate a `Template`.
+    #[test]
+    fn emitter_targeting_non_template_window_fails_validation() {
+        let tl = timeline_with_windows(vec![
+            emitting_window("storm", "other"),
+            basic_window("other"), // Scheduled, not Template
+        ]);
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("storm") && err.contains("other") && err.contains("not a Template"),
+            "error names both windows and explains why: {err}"
+        );
+    }
+
+    /// (Task 11) A `Template` window with no emitter referencing it can never spawn — a
+    /// validation error naming the orphaned window.
+    #[test]
+    fn unreferenced_template_window_fails_validation() {
+        let tl = timeline_with_windows(vec![template_window("shard")]);
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("shard") && err.contains("Template") && err.contains("never referenced"),
+            "error names the orphaned window: {err}"
+        );
+    }
+
+    /// (Task 11, spec §3.2) A `Template` window may not itself carry an `emitter` — the
+    /// Template->Template recursion guard.
+    #[test]
+    fn template_window_with_its_own_emitter_fails_validation() {
+        let mut tpl = emitting_window("shard", "shard");
+        tpl.spawn = WindowSpawn::Template;
+        let tl = timeline_with_windows(vec![tpl]);
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("shard") && err.contains("recursion"),
+            "error names the window and the recursion guard: {err}"
+        );
+    }
+
+    /// (Task 11) `Emitter::rate` must be strictly positive.
+    #[test]
+    fn emitter_rate_must_be_positive_fails_validation() {
+        let mut storm = emitting_window("storm", "shard");
+        storm.emitter.as_mut().unwrap().rate = 0.0;
+        let tl = timeline_with_windows(vec![storm, template_window("shard")]);
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("storm") && err.contains("rate"),
+            "error names the window and the offending field: {err}"
+        );
+    }
+
+    /// (Task 11) `Emitter::jitter` must be non-negative.
+    #[test]
+    fn emitter_jitter_must_be_non_negative_fails_validation() {
+        let mut storm = emitting_window("storm", "shard");
+        storm.emitter.as_mut().unwrap().jitter = -1.0;
+        let tl = timeline_with_windows(vec![storm, template_window("shard")]);
+        let err = validate_timeline(&tl).unwrap_err();
+        assert!(
+            err.contains("storm") && err.contains("jitter"),
+            "error names the window and the offending field: {err}"
+        );
     }
 
     fn cast_point_window(id: &str) -> CollisionWindow {

@@ -1,11 +1,12 @@
 use crate::assets::{
-    AcqFallback, Acquisition, CastTimeline, CastTimelineHandles, CollisionWindow, PhaseDurations,
-    VolumeMotion, WindowAnchor, WindowPhase, WindowSpawn,
+    AcqFallback, Acquisition, CastTimeline, CastTimelineHandles, CollisionWindow, MotionDirection,
+    PhaseDurations, VolumeMotion, WindowAnchor, WindowPhase, WindowSpawn,
 };
 use crate::combat::system::is_invalid_lifecycle_target;
 use crate::core::components::{Attributes, Faction};
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
+use crate::core::spawn_rng::SpawnRng;
 use crate::events::{
     CastBegan, CastPhaseChanged, CastRejectReason, CastRejected, CooldownStarted, EndReason,
     HitWindowOpened, HitboxEnded, HitboxWorldHit,
@@ -18,6 +19,7 @@ use crate::timeline::state::{effective_rate, scale_durations, ActiveCast, SkillP
 use crate::timeline::triggered::{execute_skill_timeline, ExecPayload};
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
+use rand::Rng;
 use stat_core::TriggerCondition;
 
 /// Validate pending casts: skill known? timeline loaded? mana/conditions ok? Then insert ActiveCast.
@@ -458,13 +460,24 @@ pub(crate) struct ChainPayload {
     pub visited: Vec<Entity>,
     /// Trigger-generation depth the spawned `Hitbox` inherits (0 = a player cast).
     pub depth: u8,
+    /// `true` when this spawn comes from an emitter (Task 11) — stamped onto the spawned
+    /// `Hitbox.emitted` and `HitWindowOpened.emitted`. Emission is the SAME trigger generation
+    /// as the emitting hitbox (this does NOT bump `depth`) — see `tick_emitters`.
+    pub emitted: bool,
 }
 
 /// Spawn one collision window's `Hitbox` at `origin` facing `dir`, inserting its `Projectile`
 /// motion (charge-scaled speed; gravity NOT charge-scaled — a charged lob flies flatter), and
 /// fire `HitWindowOpened`. Shared by the phase schedule (`advance_casts`, origin = caster +
-/// muzzle + anchor offset) and the triggered-timeline executor (`advance_triggered_execs`,
-/// origin = the resolved window anchor).
+/// muzzle + anchor offset), the triggered-timeline executor (`advance_triggered_execs`, origin =
+/// the resolved window anchor), and the emitter tick (`tick_emitters`, Task 11 — origin = the
+/// emitting hitbox's position + jitter).
+///
+/// `win.motion_direction` (Task 11) overrides the LAUNCH direction independent of `dir`:
+/// `Inherit` (every pre-Task-11 window; byte-identical to the old always-use-`dir` behavior) uses
+/// `dir` unchanged; `Down` launches along `-Y` regardless of `dir` — a shard falling out of the
+/// sky rather than following the caster's/emitting hitbox's facing. Both the visual rotation and
+/// `Hitbox.aim` (cone axis / projectile heading) follow the SAME resolved direction.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_window_hitbox(
     commands: &mut Commands,
@@ -476,7 +489,12 @@ pub(crate) fn spawn_window_hitbox(
     charge: Option<u8>,
     payload: ChainPayload,
 ) -> Entity {
-    let rot = Quat::from_rotation_arc(Vec3::Z, dir);
+    let motion_dir = match win.motion_direction {
+        MotionDirection::Inherit => dir,
+        MotionDirection::Down => Vec3::NEG_Y,
+    };
+    let emitted = payload.emitted;
+    let rot = Quat::from_rotation_arc(Vec3::Z, motion_dir);
     let mut ent = commands.spawn((
         Hitbox {
             caster,
@@ -485,7 +503,7 @@ pub(crate) fn spawn_window_hitbox(
             filter: win.hit_filter,
             mode: win.hit_mode,
             shape: win.shape,
-            aim: dir,
+            aim: motion_dir,
             age: 0.0,
             rehit_interval: win.rehit_interval,
             remaining: win.active_duration,
@@ -498,19 +516,21 @@ pub(crate) fn spawn_window_hitbox(
             hop: payload.hop,
             visited: payload.visited,
             depth: payload.depth,
+            emit_elapsed: 0.0,
+            emitted,
         },
         Transform::from_translation(origin).with_rotation(rot),
     ));
     match win.motion {
         VolumeMotion::Linear { speed } => {
             ent.insert(Projectile {
-                velocity: dir * (speed * charge_mult(charge)),
+                velocity: motion_dir * (speed * charge_mult(charge)),
                 gravity: 0.0,
             });
         }
         VolumeMotion::Ballistic { speed, gravity } => {
             ent.insert(Projectile {
-                velocity: dir * (speed * charge_mult(charge)),
+                velocity: motion_dir * (speed * charge_mult(charge)),
                 gravity,
             });
         }
@@ -522,8 +542,86 @@ pub(crate) fn spawn_window_hitbox(
         skill_id: skill_id.to_string(),
         window_id: win.id.clone(),
         hitbox: hitbox_entity,
+        emitted,
     });
     hitbox_entity
+}
+
+/// Emitter tick (Task 11, spec §3.2). Every live `Hitbox` whose window authors an `Emitter`
+/// accumulates elapsed time (`Hitbox.emit_elapsed`) and, each time it crosses a `1/rate` second
+/// boundary, spawns ONE instance of the named `Template` window — looping to catch up if
+/// multiple boundaries are crossed in one tick (`rate` exceeds the fixed tick rate). The spawn
+/// position is the emitting hitbox's CURRENT position plus an xz-disc jitter offset, uniform-area
+/// sampled from the dedicated [`SpawnRng`] stream (NEVER [`crate::core::config::CombatRng`] —
+/// see `SpawnRng`'s doc): `r = jitter * sqrt(u1)`, `theta = u2 * TAU`, `offset = (r*cos(theta),
+/// 0, r*sin(theta))`. The emitted instance inherits the emitting hitbox's `caster`, `skill_id`,
+/// `charge`, `aim` (subject to the Template's own `motion_direction` override), and SAME
+/// `depth` (emission is not a further trigger generation) — see `ChainPayload::emitted`.
+///
+/// A hitbox whose window isn't found (stale/unloaded timeline) or has no `emitter` is skipped
+/// entirely — `emit_elapsed` stays `0.0` and untouched, so this system is a complete no-op for
+/// every pre-Task-11 window (no existing golden is perturbed).
+pub fn tick_emitters(
+    mut commands: Commands,
+    time: Res<Time<Fixed>>,
+    mut hitboxes: Query<(&mut Hitbox, &Transform)>,
+    handles: Res<CastTimelineHandles>,
+    timelines: Res<Assets<CastTimeline>>,
+    mut spawn_rng: ResMut<SpawnRng>,
+) {
+    let dt = time.delta_secs();
+    for (mut hb, tf) in &mut hitboxes {
+        let Some(handle) = handles.0.get(&hb.skill_id) else {
+            continue;
+        };
+        let Some(timeline) = timelines.get(handle) else {
+            continue;
+        };
+        let Some(win) = timeline
+            .collision_windows
+            .iter()
+            .find(|w| w.id == hb.window_id)
+        else {
+            continue;
+        };
+        let Some(em) = &win.emitter else {
+            continue;
+        };
+        // `validate_timeline` guarantees `em.window` names an existing Template window; a
+        // missing target here would mean a timeline that skipped validation (e.g. an in-memory
+        // test override) — defensively skip rather than panic.
+        let Some(target) = timeline
+            .collision_windows
+            .iter()
+            .find(|w| w.id == em.window)
+        else {
+            continue;
+        };
+        let period = 1.0 / em.rate;
+        hb.emit_elapsed += dt;
+        while hb.emit_elapsed >= period {
+            hb.emit_elapsed -= period;
+            let u1: f32 = spawn_rng.0.gen::<f32>();
+            let u2: f32 = spawn_rng.0.gen::<f32>();
+            let r = em.jitter * u1.sqrt();
+            let theta = u2 * std::f32::consts::TAU;
+            let offset = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());
+            spawn_window_hitbox(
+                &mut commands,
+                target,
+                hb.caster,
+                &hb.skill_id,
+                tf.translation + offset,
+                hb.aim,
+                hb.charge,
+                ChainPayload {
+                    depth: hb.depth,
+                    emitted: true,
+                    ..Default::default()
+                },
+            );
+        }
+    }
 }
 
 /// Marker the [`HitboxWorldHit`] observer stamps on the struck hitbox; consumed by
@@ -716,9 +814,11 @@ mod tests {
             active_duration: 1.0,
             shape: CollisionShape::Sphere { radius: 0.5 },
             motion: VolumeMotion::Static,
+            motion_direction: MotionDirection::Inherit,
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
+            emitter: None,
         }
     }
 

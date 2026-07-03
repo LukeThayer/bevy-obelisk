@@ -77,6 +77,7 @@ pub fn detect_overlaps(
                 position: hb_tf.translation,
                 depth: hitbox.depth,
                 hop: hitbox.hop,
+                emitted: hitbox.emitted,
             });
             let _ = owner_e;
         }
@@ -134,6 +135,7 @@ pub fn resolve_beam_hits(
             position: hb_tf.translation,
             depth: hitbox.depth,
             hop: hitbox.hop,
+            emitted: hitbox.emitted,
         });
     }
 }

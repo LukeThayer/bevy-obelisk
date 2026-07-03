@@ -17,12 +17,12 @@ use stat_core::{ConditionPhase, Skill, SkillCondition, TriggerCondition, Trigger
 const MAX_TRIGGER_RESOLUTIONS: usize = 8;
 
 /// The billing rule (spec §3.2): mana bills per-hit only for the cast's own scheduled windows.
-/// Chain re-strikes (`hop > 0`) and triggered sub-casts (`depth > 0`) never passed through cast
-/// validation, so they must resolve mana-free rather than fizzling (or double-billing) at
-/// `resolve_one_hit_charged`'s `consume_skill_resources` step. (Task 11 extends this with
-/// `|| ev.emitted`.)
+/// Chain re-strikes (`hop > 0`), triggered sub-casts (`depth > 0`), and emitted instances
+/// (`emitted` — Task 11: a live hitbox's emitter, e.g. blizzard shards) never passed through
+/// cast validation, so they must resolve mana-free rather than fizzling (or double-billing) at
+/// `resolve_one_hit_charged`'s `consume_skill_resources` step.
 fn is_free_hit(ev: &HitConfirmed) -> bool {
-    ev.depth > 0 || ev.hop > 0
+    ev.depth > 0 || ev.hop > 0 || ev.emitted
 }
 
 /// A clone of `s` with `mana_cost` zeroed — handed to `resolve_one_hit_charged` for free hits so
@@ -458,6 +458,7 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
             position: Vec3::ZERO,
             depth: 0,
             hop: 0,
+            emitted: false,
         });
         // Flush queued commands so the observer's `commands.trigger(...)` events (TriggerFired /
         // DamageResolved) actually dispatch and the target's mutated Attributes are applied.

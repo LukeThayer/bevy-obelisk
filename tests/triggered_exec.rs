@@ -91,6 +91,7 @@ fn fire_hit(t: &mut ObeliskTestApp, caster: Entity, target: Entity, depth: u8, h
         position: Vec3::ZERO,
         depth,
         hop,
+        emitted: false,
     });
     // Flush the observer's queued `commands.trigger(DamageResolved ...)` so the recorder sees it.
     t.app.world_mut().flush();
@@ -187,9 +188,11 @@ fn window(id: &str, offset: f32) -> CollisionWindow {
         active_duration: 0.15,
         shape: CollisionShape::Sphere { radius: 0.5 },
         motion: VolumeMotion::Static,
+        motion_direction: Default::default(),
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::OncePerTarget,
         rehit_interval: None,
+        emitter: None,
     }
 }
 
@@ -528,9 +531,11 @@ fn fireball_bolt_timeline() -> CastTimeline {
             active_duration: 1.0,
             shape: CollisionShape::Sphere { radius: 0.5 },
             motion: VolumeMotion::Linear { speed: 10.0 },
+            motion_direction: Default::default(),
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::FirstOnly,
             rehit_interval: None,
+            emitter: None,
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
@@ -562,9 +567,11 @@ fn fireball_explosion_timeline() -> CastTimeline {
             active_duration: 0.2,
             shape: CollisionShape::Sphere { radius: 1.5 },
             motion: VolumeMotion::Static,
+            motion_direction: Default::default(),
             hit_filter: HitFilter::Enemies,
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
+            emitter: None,
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),

@@ -1,10 +1,12 @@
 pub mod components;
 pub mod config;
 pub mod cooldown;
+pub mod spawn_rng;
 pub mod tick;
 pub use components::{Attributes, Combatant, Faction, SkillSlots};
 
 use crate::core::config::{CombatRng, SkillRegistry};
+use crate::core::spawn_rng::SpawnRng;
 use crate::ids::{sync_index_added, sync_index_removed, ObeliskEntityIndex};
 use crate::ObeliskSet;
 use bevy::prelude::*;
@@ -19,6 +21,7 @@ impl Plugin for ObeliskCorePlugin {
         app.init_resource::<ObeliskEntityIndex>()
             .init_resource::<SkillRegistry>()
             .init_resource::<CombatRng>()
+            .init_resource::<SpawnRng>()
             .init_resource::<crate::core::cooldown::Cooldowns>()
             .add_systems(Update, (sync_index_added, sync_index_removed))
             .add_systems(

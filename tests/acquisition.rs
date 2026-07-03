@@ -42,9 +42,11 @@ fn storm_window() -> CollisionWindow {
         active_duration: 1.0,
         shape: CollisionShape::Sphere { radius: 3.0 },
         motion: VolumeMotion::Static,
+        motion_direction: Default::default(),
         hit_filter: HitFilter::Enemies,
         hit_mode: HitMode::OncePerTarget,
         rehit_interval: None,
+        emitter: None,
     }
 }
 
@@ -200,9 +202,11 @@ fn hitscan_fizzle_is_a_paid_rejection() {
                 active_duration: 1.0,
                 shape: CollisionShape::Sphere { radius: 0.5 },
                 motion: VolumeMotion::Linear { speed: 10.0 },
+                motion_direction: Default::default(),
                 hit_filter: HitFilter::Enemies,
                 hit_mode: HitMode::FirstOnly,
                 rehit_interval: None,
+                emitter: None,
             }],
             acquisition: Acquisition::HitscanEntity {
                 range: 20.0,

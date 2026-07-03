@@ -56,6 +56,17 @@ pub struct Hitbox {
     /// Trigger-generation depth this hitbox was spawned at (0 = a player cast). Copied from
     /// `ChainPayload.depth`.
     pub depth: u8,
+    /// Seconds accumulated toward this hitbox's next emitter spawn boundary (Task 11, spec
+    /// §3.2) — only meaningful when this window authors an `Emitter`; otherwise always `0.0`
+    /// and untouched by `tick_emitters`. Lives on the hitbox (not a side table) so it needs no
+    /// extra bookkeeping when the hitbox despawns.
+    pub emit_elapsed: f32,
+    /// `true` when this hitbox was spawned BY an emitter (Task 11) rather than the phase
+    /// schedule or a triggered execution. Extends `is_free_hit`
+    /// (`src/combat/system.rs`) so an emitted shard's hits never bill mana, and routes its
+    /// `HitWindowOpened` to the `emit_{window_id}` cue instead of `on_window_{window_id}`
+    /// (`src/vfx.rs::cue_on_window`).
+    pub emitted: bool,
 }
 
 impl Hitbox {
@@ -120,6 +131,8 @@ mod tests {
             hop: 0,
             visited: Vec::new(),
             depth: 0,
+            emit_elapsed: 0.0,
+            emitted: false,
         }
     }
 

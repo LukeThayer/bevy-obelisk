@@ -130,7 +130,25 @@ impl Plugin for ObeliskSimPlugin {
                 timeline::advance::validate_casts.in_set(ObeliskSet::Validate),
                 (
                     timeline::advance::advance_casts,
-                    timeline::advance::end_hitboxes,
+                    // Task 11: ticks every live hitbox's emitter (if any), spawning Template
+                    // instances. `tick_emitters` and `end_hitboxes` both mutate `Hitbox` — a
+                    // real query conflict Bevy must serialize — so ONLY this pair is `.chain()`d,
+                    // end BEFORE tick (despawn commands are deferred, so a hitbox reaped this
+                    // tick still gets one last emit chance before it's actually gone next sync
+                    // point). `advance_casts`/`advance_triggered_execs` are deliberately left
+                    // OUTSIDE the chain, unordered relative to the rest exactly as before this
+                    // task — chaining `tick_emitters` BEFORE `end_hitboxes` (the seemingly more
+                    // "natural" reading order) instead reordered `end_hitboxes` relative to
+                    // `advance_casts`/the ResolveHits set's sync boundary and perturbed
+                    // `everytick_hitbox`'s golden (its `EveryTick` hitbox's fuse-out tick lost its
+                    // final overlap hit). No existing content authors an emitter, so
+                    // `tick_emitters` itself is a no-op for every current golden either way —
+                    // this ordering is scheduling-only, not a behavior change.
+                    (
+                        timeline::advance::end_hitboxes,
+                        timeline::advance::tick_emitters,
+                    )
+                        .chain(),
                     timeline::triggered::advance_triggered_execs,
                 )
                     .in_set(ObeliskSet::Advance),

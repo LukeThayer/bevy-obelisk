@@ -55,6 +55,11 @@ pub struct HitWindowOpened {
     pub skill_id: String,
     pub window_id: String,
     pub hitbox: Entity,
+    /// `true` when this window was spawned BY an emitter (Task 11) rather than the phase
+    /// schedule or a triggered execution. `src/vfx.rs::cue_on_window` branches on this to fire
+    /// `emit_{window_id}` instead of `on_window_{window_id}` — an emitted instance NEVER fires
+    /// the ordinary window-open cue (spec §3.2: emit only).
+    pub emitted: bool,
 }
 
 #[derive(Event, Clone, Debug)]
@@ -72,6 +77,10 @@ pub struct HitConfirmed {
     pub depth: u8,
     /// How many retarget hops preceded the hitbox that landed this hit (0 = the initial window).
     pub hop: u8,
+    /// `true` when the hitbox that landed this hit was spawned by an emitter (Task 11) — extends
+    /// the free-hit billing rule (`src/combat/system.rs::is_free_hit`) so an emitted shard's
+    /// hits never bill mana, same as a chain re-strike or triggered sub-cast.
+    pub emitted: bool,
 }
 
 #[derive(Event, Clone, Debug)]
@@ -192,6 +201,10 @@ pub enum CueKind {
     OnHit,
     /// A window ended (any [`EndReason`]) — the cue fires AT the end position.
     OnEnd,
+    /// An emitter (Task 11) instantiated a `Template` window — fires AT the emitted instance's
+    /// spawn position, INSTEAD OF `OnWindow` (spec §3.2: emit only, never the ordinary
+    /// window-open cue).
+    OnEmit,
 }
 
 /// A VFX/audio cue fired by a skill at a moment in its timeline. The presentation layer
