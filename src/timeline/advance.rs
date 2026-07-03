@@ -342,7 +342,6 @@ pub fn advance_casts(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
     mut casts: Query<(Entity, &mut ActiveCast, &Transform)>,
-    registry: Res<SkillRegistry>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
 ) {
@@ -425,7 +424,6 @@ pub fn advance_casts(
         if cast.phase == SkillPhase::Done {
             commands.entity(caster).remove::<ActiveCast>();
         }
-        let _ = &registry; // kept for future use_conditions re-checks
     }
 }
 

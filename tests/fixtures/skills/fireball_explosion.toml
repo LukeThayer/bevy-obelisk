@@ -1,0 +1,12 @@
+id = "fireball_explosion"
+name = "Fireball Explosion"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+
+# The triggered-only half of the Task 13 canonical fireball pair (see fireball.toml). Never cast
+# directly by a scenario; only reached via fireball's Always/OnImpact/OnExpire conditions
+# (execute_skill_timeline, Task 6/7/8). Its own damage, separate from the bolt's.
+[damage]
+base_damages = [{ type = "fire", min = 15.0, max = 15.0 }]

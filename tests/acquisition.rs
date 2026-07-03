@@ -68,6 +68,9 @@ fn blizzard_timeline() -> CastTimeline {
         },
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 
@@ -216,6 +219,9 @@ fn hitscan_fizzle_is_a_paid_rejection() {
             },
             vfx_cues: HashMap::new(),
             chain_radius: 6.0,
+            chargeable: false,
+            max_hold: 1.0,
+            cues: HashMap::new(),
         });
     t.app
         .world_mut()
@@ -296,6 +302,9 @@ fn cast_point_anchor_in_aim_skill_fails_validation() {
         acquisition: Acquisition::Aim, // the default — never produces a point
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     };
     let err = obelisk_bevy::assets::validate_timeline(&tl).unwrap_err();
     assert!(

@@ -2,7 +2,7 @@
 
 Guidance for Claude Code (and any agent) working in the **obelisk-bevy** repo.
 
-`obelisk-bevy` is a Bevy 0.17 plugin that exposes the pure-Rust **obelisk** ARPG libraries
+`obelisk-bevy` is a Bevy 0.18 plugin that exposes the pure-Rust **obelisk** ARPG libraries
 (`stat_core`, `loot_core`, `skill_tree`, `tables_core`) to Bevy games, adding the 3D + temporal
 layer they lack: a spatiotemporal skill/cast model, hit/hurt boxes, casting primitives, VFX-cue
 hooks, a server-authoritative netcode egress, and content integration (skill tree, loot).
@@ -191,7 +191,7 @@ which fire when commands flush within the same `update()`.
   FixedUpdate. This also sidesteps same-tick physics ordering. Hitboxes are plain Transform+`Hitbox`
   entities (not physics bodies); only hurtboxes are colliders.
 - **Hurtbox = collider on the owner entity.** `insert_hurtbox` puts `RigidBody::Static` + `Collider`
-  on the combatant itself. **Avian 0.4 `RigidBody::Static` DOES track Transform changes** (static ≠
+  on the combatant itself. **Avian 0.5 `RigidBody::Static` DOES track Transform changes** (static ≠
   frozen position — it re-reads the entity Transform each step), so hurtboxes follow moving owners.
   (Empirically verified in `spatial/detect.rs::hurtbox_tracks_a_moving_owner`.)
 - **Team filtering at resolution time.** `HitFilter` (Caster/Allies/Enemies/All) is applied against
@@ -216,8 +216,9 @@ which fire when commands flush within the same `update()`.
   docs-only.
 
 ### Confirmed external facts (hard-won — don't re-derive)
-- **Versions: Bevy `0.17` ↔ Avian `0.4`** (Avian 0.5–0.6 target Bevy 0.18). `bevy_common_assets` not
-  used; the RON loader is hand-rolled (`ron` crate).
+- **Versions: Bevy `0.18` ↔ Avian `0.5`** (pinned `bevy = "0.18"` / `avian3d = "0.5"` in
+  `Cargo.toml`; Task 13 doc-drift fix — this repo had drifted onto 0.18/0.5 while this file still
+  said 0.17/0.4). `bevy_common_assets` not used; the RON loader is hand-rolled (`ron` crate).
 - **Headless app recipe** (manual `App`, not `run()`): `MinimalPlugins` + `AssetPlugin` (set
   `file_path:"."` for tests vs default `"assets"` for `DefaultPlugins`) + `bevy::mesh::MeshPlugin`
   + `bevy::scene::ScenePlugin` + `PhysicsPlugins::new(FixedUpdate)` + `TimeUpdateStrategy::
@@ -225,7 +226,8 @@ which fire when commands flush within the same `update()`.
   before the first `update()`** (loaders register in `finish`). A static collider is visible to
   `SpatialQuery` from the **2nd** `update()`.
 - **Buffered events = `#[derive(Message)]` + `app.add_message::<T>()` + `MessageWriter::write` +
-  `MessageReader::read`** (`add_event`/`EventWriter` are deprecated in 0.17). Observer events =
+  `MessageReader::read`** (`add_event`/`EventWriter` are deprecated as of 0.17, still deprecated
+  under 0.18). Observer events =
   `#[derive(Event)]` + `commands.trigger` + `On<E>`.
 - **EntityCommand closures**: `self.queue(move |mut e: EntityWorldMut| { e.get_mut::<T>()… })`; fire
   an event from inside via `e.world_scope(|w| w.trigger(ev))`.

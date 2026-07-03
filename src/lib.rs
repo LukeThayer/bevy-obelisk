@@ -1,6 +1,9 @@
-//! obelisk-bevy: a Bevy 0.17 plugin exposing the obelisk ARPG libraries.
+//! obelisk-bevy: a Bevy 0.18 plugin exposing the obelisk ARPG libraries.
 //!
-//! # API notes — confirmed against bevy 0.17.3 / avian3d 0.4.1 (probe 2026-06-05)
+//! # API notes — written against bevy 0.17.3 / avian3d 0.4.1 (probe 2026-06-05); the crate has
+//! since been upgraded to bevy 0.18.1 / avian3d 0.5.0 (Task 13 doc-drift fix) — the notes below
+//! predate that bump and have not been re-probed against 0.18/0.5, so treat them as historical
+//! API-shape guidance rather than a live compatibility guarantee.
 //!
 //! ## (A) Required components with non-Default value
 //! `#[require(Health)]` works as written: Bevy calls `Health::default()` automatically

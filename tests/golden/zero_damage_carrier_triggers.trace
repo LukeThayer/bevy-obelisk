@@ -1,0 +1,10 @@
+   2	CastBegan	caster=player skill=dud_bolt dur=0.300
+   7	CastPhase	caster=player skill=dud_bolt Windup->Active
+   7	HitWindow	caster=player skill=dud_bolt window=bolt
+   9	HitConfirmed	caster=player target=dummy skill=dud_bolt
+   9	Damage	caster=player target=dummy skill=dud_bolt dmg=0.000 kill=false life_after=200.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  10	HitWindow	caster=player skill=fireball_explosion window=blast
+  10	HitConfirmed	caster=player target=dummy skill=fireball_explosion
+  10	Damage	caster=player target=dummy skill=fireball_explosion dmg=15.000 kill=false life_after=185.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  13	CastPhase	caster=player skill=dud_bolt Active->Recovery
+  19	CastPhase	caster=player skill=dud_bolt Recovery->Done

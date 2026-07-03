@@ -33,10 +33,83 @@ pub struct CastTimeline {
     /// only). Defaults to 6.0 so every pre-Task-12 timeline round-trips unaffected.
     #[serde(default = "default_chain_radius")]
     pub chain_radius: f32,
+    /// Whether the HOST may hold this cast to scale it (e.g. a longer windup for a bigger bolt).
+    /// Data-only (Task 13, spec §3.2/§4): the sim never reads it — charging still happens purely
+    /// through the existing `charge: Option<u8>` cast parameter (`charge_mult`,
+    /// `cast_skill_*_charged`), which is independent of this flag. `chargeable` is authored
+    /// metadata for the HOST to decide whether to offer hold-to-charge input at all. Defaults to
+    /// `false` so every pre-Task-13 timeline round-trips unaffected.
+    #[serde(default)]
+    pub chargeable: bool,
+    /// Seconds the HOST may hold a chargeable cast before it caps out. Data-only, same caveat as
+    /// `chargeable` — never read by the sim. Defaults to 1.0.
+    #[serde(default = "default_max_hold")]
+    pub max_hold: f32,
+    /// Presentation cue-binding map (Task 13, spec §3.2/§4): authored `cue key -> CueBinding`
+    /// (VFX effect / attach mode / animation / charge-driven params) for the editor and any other
+    /// presentation consumer to resolve `on_cast`/`on_window_*`/`on_hit`/... keys against. Pure
+    /// data — DISTINCT from `vfx_cues` (which the sim's cue-firing systems DO read to name the
+    /// `CueEvent::cue_id` a key fires). Nothing in this crate ever reads `cues`; a binding naming
+    /// an effect/anim that doesn't exist anywhere is therefore inert by construction, never a
+    /// panic (see `cue_binding_naming_a_nonexistent_effect_does_not_panic`,
+    /// `src/scenario/library.rs`). `#[reflect(ignore)]`: sidesteps requiring `Reflect` on the
+    /// whole `CueBinding` tree, same rationale as `acquisition` above. Defaults to empty so every
+    /// pre-Task-13 timeline round-trips unaffected.
+    #[serde(default)]
+    #[reflect(ignore)]
+    pub cues: std::collections::HashMap<String, CueBinding>,
 }
 
 fn default_chain_radius() -> f32 {
     6.0
+}
+
+fn default_max_hold() -> f32 {
+    1.0
+}
+
+/// A presentation binding for one cue key (Task 13, spec §3.2/§4) — what VFX/anim/params the
+/// HOST should play when that cue fires. Entirely inert to the sim; see `CastTimeline::cues`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CueBinding {
+    /// Name of a VFX effect/preset to play (editor/host-resolved; not validated here).
+    #[serde(default)]
+    pub effect: Option<String>,
+    /// Where the effect attaches.
+    #[serde(default)]
+    pub attach: CueAttach,
+    /// Name of an animation clip to play alongside the effect (editor/host-resolved).
+    #[serde(default)]
+    pub anim: Option<String>,
+    /// Extra parameters fed to the effect/anim from cast-time data.
+    #[serde(default)]
+    pub params: Vec<CueParam>,
+}
+
+/// Where a cue's effect attaches in the world.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CueAttach {
+    /// Plays at a fixed world position/orientation (does not track its source afterward).
+    #[default]
+    World,
+    /// Follows its source entity for its lifetime.
+    Follow,
+}
+
+/// One cue parameter binding: `param` (the effect/anim parameter name) driven by `source`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CueParam {
+    pub param: String,
+    pub source: ParamSource,
+}
+
+/// Where a cue parameter's value comes from. v1: only the cast's charge level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParamSource {
+    /// The cast's `charge: Option<u8>` level (0-255; `None` treated as unspecified by the host).
+    Charge,
 }
 
 /// Authored aim-acquisition requirement (Task 10, spec §3.2). `validate_casts` checks the
@@ -130,8 +203,12 @@ fn default_true() -> bool {
     true
 }
 
-/// When (whether) a window enters the world on its own.
+/// When (whether) a window enters the world on its own. `deny_unknown_fields` (Task 13 review
+/// finding, carried from Task 9): a typo'd `Scheduled` field (e.g. `phse`) must fail loud at
+/// load, exactly like every other authored struct in this schema, rather than silently falling
+/// back to defaults for the fields it DID recognize.
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub enum WindowSpawn {
     /// On the phase schedule: eligible at `phase`'s start time plus `offset` seconds.
     Scheduled {
@@ -445,6 +522,9 @@ mod tests {
             acquisition: Acquisition::default(),
             vfx_cues: Default::default(),
             chain_radius: default_chain_radius(),
+            chargeable: false,
+            max_hold: default_max_hold(),
+            cues: Default::default(),
         }
     }
 
@@ -790,6 +870,138 @@ mod tests {
         );
         let parsed: CastTimeline = ron::de::from_str(&src).expect("parse without chain_radius");
         assert_eq!(parsed.chain_radius, 6.0);
+    }
+
+    /// `chargeable`/`max_hold` (Task 13) are absent from every pre-Task-13 `.cast.ron` fixture;
+    /// omitting them must default to `false`/`1.0` rather than fail parsing.
+    #[test]
+    fn chargeable_and_max_hold_default_when_omitted() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/skills/firebolt.cast.ron"
+        ))
+        .expect("read firebolt.cast.ron");
+        assert!(
+            !src.contains("chargeable") && !src.contains("max_hold"),
+            "fixture must not already author chargeable/max_hold for this default-coverage test"
+        );
+        let parsed: CastTimeline =
+            ron::de::from_str(&src).expect("parse without chargeable/max_hold");
+        assert!(!parsed.chargeable);
+        assert_eq!(parsed.max_hold, 1.0);
+    }
+
+    /// `chargeable`/`max_hold` round-trip through RON when authored non-default (Task 13).
+    #[test]
+    fn chargeable_and_max_hold_round_trip() {
+        let tl = CastTimeline {
+            chargeable: true,
+            max_hold: 2.5,
+            ..timeline_with(basic_window("bolt"))
+        };
+        let s = ron::ser::to_string_pretty(&tl, Default::default()).unwrap();
+        let back: CastTimeline = ron::from_str(&s).unwrap();
+        assert!(back.chargeable);
+        assert_eq!(back.max_hold, 2.5);
+    }
+
+    /// The presentation `cues` map (Task 13, spec §3.2/§4) round-trips every field, including
+    /// both `CueAttach` variants and the sole v1 `ParamSource::Charge` variant. Pure data — this
+    /// test only proves the schema serializes faithfully; `cue_binding_naming_a_nonexistent_effect_
+    /// does_not_panic` (`src/scenario/library.rs`) proves the sim never reads it.
+    #[test]
+    fn cue_binding_round_trips_through_ron() {
+        let mut cues = std::collections::HashMap::new();
+        cues.insert(
+            "on_cast".to_string(),
+            CueBinding {
+                effect: Some("bolt_cast_fx".into()),
+                attach: CueAttach::World,
+                anim: Some("cast_anim".into()),
+                params: vec![CueParam {
+                    param: "scale".into(),
+                    source: ParamSource::Charge,
+                }],
+            },
+        );
+        cues.insert(
+            "on_hit".to_string(),
+            CueBinding {
+                effect: Some("bolt_impact_fx".into()),
+                attach: CueAttach::Follow,
+                anim: None,
+                params: vec![],
+            },
+        );
+        let tl = CastTimeline {
+            cues,
+            ..timeline_with(basic_window("bolt"))
+        };
+        let s = ron::ser::to_string_pretty(&tl, Default::default()).unwrap();
+        let back: CastTimeline = ron::from_str(&s).unwrap();
+        assert_eq!(back.cues.len(), 2);
+        let on_cast = &back.cues["on_cast"];
+        assert_eq!(on_cast.effect.as_deref(), Some("bolt_cast_fx"));
+        assert_eq!(on_cast.attach, CueAttach::World);
+        assert_eq!(on_cast.anim.as_deref(), Some("cast_anim"));
+        assert_eq!(on_cast.params.len(), 1);
+        assert_eq!(on_cast.params[0].param, "scale");
+        assert_eq!(on_cast.params[0].source, ParamSource::Charge);
+        let on_hit = &back.cues["on_hit"];
+        assert_eq!(on_hit.attach, CueAttach::Follow);
+        assert!(on_hit.anim.is_none());
+    }
+
+    /// `cues` omitted entirely (every pre-Task-13 timeline) defaults to empty.
+    #[test]
+    fn cues_default_to_empty_when_omitted() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/skills/firebolt.cast.ron"
+        ))
+        .expect("read firebolt.cast.ron");
+        let parsed: CastTimeline = ron::de::from_str(&src).expect("parse without cues");
+        assert!(parsed.cues.is_empty());
+    }
+
+    /// `WindowSpawn`'s new `deny_unknown_fields` (Task 13 review finding, carried from Task 9)
+    /// fails loud on a typo'd `Scheduled` field instead of silently ignoring it.
+    #[test]
+    fn window_spawn_rejects_a_typoed_field() {
+        let src = r#"(
+            skill_id: "typo",
+            phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+            collision_windows: [
+                ( id: "w", spawn: Scheduled( phse: Active ), active_duration: 1.0,
+                  shape: Sphere( radius: 0.5 ), hit_filter: Enemies, hit_mode: OncePerTarget ),
+            ],
+        )"#;
+        assert!(
+            ron::from_str::<CastTimeline>(src).is_err(),
+            "a typo'd WindowSpawn::Scheduled field must fail loud, not half-parse"
+        );
+    }
+
+    /// Every shipped `.cast.ron` fixture still parses after the `WindowSpawn::deny_unknown_fields`
+    /// hygiene fix — the carried Task 9 review item explicitly asked this be verified, not assumed.
+    #[test]
+    fn every_shipped_cast_asset_still_parses() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).expect("read assets/skills") {
+            let path = entry.expect("dir entry").path();
+            if path.to_string_lossy().ends_with(".cast.ron") {
+                let src =
+                    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+                ron::de::from_str::<CastTimeline>(&src)
+                    .unwrap_or_else(|e| panic!("{path:?} failed to parse: {e}"));
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 10,
+            "expected to check every shipped skill (got {checked})"
+        );
     }
 
     #[test]

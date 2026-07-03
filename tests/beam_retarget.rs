@@ -65,6 +65,9 @@ fn chain_timeline(skill_id: &str) -> CastTimeline {
         ]),
         // Layout below spans T0(2)..T4(7.5) with <=1.5 gaps; 6.0 comfortably covers every hop.
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 

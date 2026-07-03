@@ -1,0 +1,8 @@
+   2	CastBegan	caster=player skill=fireball dur=0.300
+   7	CastPhase	caster=player skill=fireball Windup->Active
+   7	HitWindow	caster=player skill=fireball window=bolt
+  13	CastPhase	caster=player skill=fireball Active->Recovery
+  17	HitWindow	caster=player skill=fireball_explosion window=blast
+  17	HitConfirmed	caster=player target=bystander skill=fireball_explosion
+  17	Damage	caster=player target=bystander skill=fireball_explosion dmg=15.000 kill=false life_after=185.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  19	CastPhase	caster=player skill=fireball Recovery->Done

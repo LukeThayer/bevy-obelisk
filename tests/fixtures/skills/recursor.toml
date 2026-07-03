@@ -1,0 +1,20 @@
+id = "recursor"
+name = "Recursor"
+tags = ["spell"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+
+# Dedicated fixture for trigger_depth_cap_terminates (src/scenario/library.rs): a self-triggering
+# skill whose own fuse-out re-executes ITSELF, one trigger-depth deeper each time
+# (execute_skill_timeline stamps hb.depth.saturating_add(1) -- src/timeline/advance.rs's
+# end_hitboxes). The scenario's proof is that this recursion TERMINATES at MAX_TRIGGER_DEPTH (8,
+# src/timeline/triggered.rs) instead of looping forever: execute_skill_timeline drops (warns,
+# spawns nothing) once payload.depth >= MAX_TRIGGER_DEPTH.
+[[conditions]]
+trigger_skill = "recursor"
+type = "on_expire"
+additional = true
+
+[damage]
+base_damages = [{ type = "physical", min = 0.0, max = 0.0 }]

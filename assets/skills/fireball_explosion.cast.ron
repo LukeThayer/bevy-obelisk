@@ -1,0 +1,16 @@
+// The triggered-only half of the Task 13 canonical fireball pair (see fireball.cast.ron).
+// SelfPoint acquisition (always succeeds, so `validate_timeline` accepts the CastPoint-anchored
+// window below even though this timeline is never cast directly by a scenario -- only reached
+// via execute_skill_timeline, whose payload position becomes the cast point regardless of
+// acquisition). A static sphere anchored at the trigger's payload position (the bolt's hit /
+// world impact / fuse-expiry point).
+(
+  skill_id: "fireball_explosion",
+  phase_durations: ( windup: 0.0, active: 1.0, recovery: 0.0 ),
+  collision_windows: [
+    ( id: "blast", spawn: Scheduled( phase: Active, offset: 0.0 ), anchor: CastPoint,
+      active_duration: 0.2, shape: Sphere( radius: 1.5 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+  acquisition: SelfPoint,
+)

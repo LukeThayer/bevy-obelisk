@@ -210,6 +210,9 @@ fn two_window_timeline() -> CastTimeline {
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 
@@ -398,6 +401,9 @@ fn executor_retries_while_timeline_asset_is_still_loading() {
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     };
     let _ = t
         .app
@@ -542,6 +548,9 @@ fn fireball_bolt_timeline() -> CastTimeline {
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 
@@ -579,6 +588,9 @@ fn fireball_explosion_timeline() -> CastTimeline {
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 

@@ -59,6 +59,25 @@ pub enum Action {
         id: String,
         stats: Vec<(StatType, f64)>,
     },
+    /// Cast a skill at an entity target CARRYING a charge level (`cast_skill_at_charged`, Task 13 —
+    /// no existing `Action` variant threads a charge through the scripted-cast path). `charge` is
+    /// the same `0..=255` scale `charge_mult` reads (`0` = the 0.5x floor, `255` = the 2.0x
+    /// ceiling).
+    CastCharged {
+        caster: String,
+        skill: String,
+        target: String,
+        charge: u8,
+    },
+    /// Report a HOST-detected world impact (`HitboxWorldHit`) against the first live hitbox whose
+    /// `skill_id` is `skill` (Task 13 — the scenario harness has no floor plane of its own; a real
+    /// game reports world impacts the same way, e.g. arena's floor plane — see
+    /// `tests/end_events.rs::host_world_hit_ends_with_hit_world_at_the_impact_point`). No-op if no
+    /// such hitbox is currently live.
+    WorldHit {
+        skill: String,
+        pos: Vec3,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -399,6 +418,37 @@ pub fn apply_action(app: &mut App, action: &Action) {
                     .commands()
                     .entity(e)
                     .apply_stat_sources(vec![Box::new(source)]);
+            }
+        }
+        Action::CastCharged {
+            caster,
+            skill,
+            target,
+            charge,
+        } => {
+            if let Some(c) = id_of(app, caster) {
+                if let Some(te) = id_of(app, target) {
+                    app.world_mut().commands().entity(c).cast_skill_at_charged(
+                        skill.clone(),
+                        te,
+                        *charge,
+                    );
+                }
+            }
+        }
+        Action::WorldHit { skill, pos } => {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &crate::spatial::boxes::Hitbox)>();
+            let hit = q
+                .iter(app.world())
+                .find(|(_, hb)| &hb.skill_id == skill)
+                .map(|(e, _)| e);
+            if let Some(hitbox) = hit {
+                app.world_mut().trigger(HitboxWorldHit {
+                    hitbox,
+                    position: *pos,
+                });
             }
         }
     }

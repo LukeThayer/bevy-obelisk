@@ -95,6 +95,9 @@ fn blizzard_timeline() -> CastTimeline {
         },
         vfx_cues: HashMap::from([("emit_shard".to_string(), "blizzard_emit_shard".to_string())]),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 
@@ -219,6 +222,9 @@ fn firebolt_timeline() -> CastTimeline {
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
     }
 }
 
