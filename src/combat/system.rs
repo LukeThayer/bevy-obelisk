@@ -164,6 +164,34 @@ pub(crate) fn eval_condition_obelisk_side(cond: &TriggerCondition, out: &HitOutc
     }
 }
 
+/// Warn-throttle (ticket 5, phase-3 prerequisite): the `additional = false` warn and the
+/// `is_unsupported_timeline_condition` warn (both in `on_hit_confirmed` below and their facade
+/// twin, `src/facade/combat.rs::resolve_skill_hit`) used to fire ONCE PER HIT — an `EveryTick`
+/// window (or any skill that keeps landing hits against the same content bug) spammed the log
+/// with an identical line every tick. Gates each distinct `(skill_id, trigger_skill)` pair to ONE
+/// `warn!` for the app's lifetime, via [`WarnedConditions::should_warn`].
+///
+/// Keyed `(String, String)` per the ticket, but the two warn KINDS (`additional = false` vs.
+/// `EveryNthHit`-unsupported) about the SAME `(skill_id, trigger_skill)` pair are independent
+/// content bugs and must not suppress each other — `should_warn` folds the warn-kind into the
+/// SECOND tuple element (`"{trigger_skill}#{warn_kind}"`) rather than widening the key to a
+/// 3-tuple, so the resource's shape stays exactly the ticket's `HashSet<(String, String)>`.
+/// Shared across BOTH call sites (observer + facade) by design: a warning already logged by one
+/// suppresses the identical message from the other, since they'd otherwise print the exact same
+/// line for the exact same content bug.
+#[derive(Resource, Default)]
+pub struct WarnedConditions(pub std::collections::HashSet<(String, String)>);
+
+impl WarnedConditions {
+    /// `true` the FIRST time this `(skill_id, trigger_skill)` pair is seen for `warn_kind` — call
+    /// sites should `warn!` only when this returns `true`. `false` (already warned) every time
+    /// after. Check-and-insert in one call so no site can race a check against a separate insert.
+    pub fn should_warn(&mut self, warn_kind: &str, skill_id: &str, trigger_skill: &str) -> bool {
+        self.0
+            .insert((skill_id.to_string(), format!("{trigger_skill}#{warn_kind}")))
+    }
+}
+
 /// Observer: when a hit is confirmed, run the deterministic resolve funnel and emit results.
 pub fn on_hit_confirmed(
     hit: On<HitConfirmed>,
@@ -171,6 +199,7 @@ pub fn on_hit_confirmed(
     registry: Res<SkillRegistry>,
     handles: Res<CastTimelineHandles>,
     mut rng: ResMut<CombatRng>,
+    mut warned: ResMut<WarnedConditions>,
     mut commands: Commands,
 ) {
     let ev = hit.event().clone();
@@ -190,7 +219,9 @@ pub fn on_hit_confirmed(
     // `is_invalid_timeline_target` for the `additional = false` content-bug check.
     let (timeline_targets, packet_conditions) = partition_conditions(&skill.conditions, &handles);
     for cond in &timeline_targets {
-        if is_invalid_timeline_target(cond, &handles) {
+        if is_invalid_timeline_target(cond, &handles)
+            && warned.should_warn("additional", &ev.skill_id, &cond.trigger_skill)
+        {
             warn!(
                 "skill '{}' condition triggers timeline skill '{}' with additional = false — \
                  timeline-target conditions must be additional = true (v1); treating as \
@@ -198,7 +229,9 @@ pub fn on_hit_confirmed(
                 ev.skill_id, cond.trigger_skill
             );
         }
-        if is_unsupported_timeline_condition(cond, &handles) {
+        if is_unsupported_timeline_condition(cond, &handles)
+            && warned.should_warn("unsupported", &ev.skill_id, &cond.trigger_skill)
+        {
             warn!(
                 "skill '{}' condition triggers timeline skill '{}' using EveryNthHit — \
                  EveryNthHit on timeline-target conditions is forbidden (v1, spec §3.2: its \
@@ -458,6 +491,7 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
         app.insert_resource(SkillRegistry(registry));
         app.insert_resource(CombatRng(ChaCha8Rng::seed_from_u64(5)));
         app.init_resource::<CastTimelineHandles>();
+        app.init_resource::<WarnedConditions>();
 
         // Recorder for TriggerFired (the EventRecorder in testkit doesn't cover this event).
         let fired: Arc<Mutex<Vec<TriggerFired>>> = Arc::new(Mutex::new(Vec::new()));
@@ -574,5 +608,37 @@ base_damages = [{ type = "lightning", min = 25.0, max = 25.0 }]
             !is_unsupported_timeline_condition(&packet_every_nth, &handles),
             "EveryNthHit against a skill with no registered timeline is the ordinary packet path"
         );
+    }
+
+    /// Ticket 5: `should_warn` gates each `(skill_id, trigger_skill, warn_kind)` triple to ONE
+    /// `true` for the app's lifetime — the resource grows on the first hit and stays put on
+    /// every subsequent hit for the SAME condition (the `EveryTick`-window spam case), while a
+    /// DIFFERENT warn_kind for the identical `(skill_id, trigger_skill)` pair still gets its own
+    /// first warning (independent content bugs).
+    #[test]
+    fn warned_conditions_throttles_once_per_skill_trigger_and_kind() {
+        let mut warned = WarnedConditions::default();
+        assert!(
+            warned.should_warn("additional", "fireball", "fireball_explosion"),
+            "first hit: not yet warned"
+        );
+        assert_eq!(warned.0.len(), 1, "the resource records the first warning");
+
+        assert!(
+            !warned.should_warn("additional", "fireball", "fireball_explosion"),
+            "second hit, identical condition: already warned"
+        );
+        assert_eq!(
+            warned.0.len(),
+            1,
+            "a repeat of the same (skill, trigger, kind) must not grow the set"
+        );
+
+        assert!(
+            warned.should_warn("unsupported", "fireball", "fireball_explosion"),
+            "a DIFFERENT warn kind on the same (skill, trigger) pair is an independent content \
+             bug and must still warn once"
+        );
+        assert_eq!(warned.0.len(), 2);
     }
 }

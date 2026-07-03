@@ -70,6 +70,8 @@ fn cue_on_cast(
             position,
             position_from: None,
             kind: CueKind::OnCast,
+            charge: e.charge,
+            end_reason: None,
         });
     }
 }
@@ -113,12 +115,18 @@ fn cue_on_window(
             Some(to) => (to, Some(origin)),
             None => (origin, None),
         };
+        // The hitbox this window opened carries the cast's charge (forwarded from `ActiveCast`
+        // at spawn, see `spawn_window_hitbox`) — reuse the SAME query already fetched above for
+        // the beam lookup rather than widening `HitWindowOpened` with a redundant field.
+        let charge = hitboxes.get(e.hitbox).ok().and_then(|hb| hb.charge);
         commands.trigger(CueEvent {
             cue_id,
             source: e.caster,
             position,
             position_from,
             kind,
+            charge,
+            end_reason: None,
         });
     }
 }
@@ -141,6 +149,8 @@ fn cue_on_end(
             position: e.position,
             position_from: None,
             kind: CueKind::OnEnd,
+            charge: e.charge,
+            end_reason: Some(e.reason),
         });
     }
 }
@@ -164,6 +174,8 @@ fn cue_on_hit(
             position,
             position_from: None,
             kind: CueKind::OnHit,
+            charge: e.charge,
+            end_reason: None,
         });
     }
 }

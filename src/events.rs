@@ -5,6 +5,10 @@ pub struct CastBegan {
     pub caster: Entity,
     pub skill_id: String,
     pub total_duration: f32,
+    /// Optional per-cast charge (see `crate::timeline::cast::charge_mult`). Carried so the
+    /// `on_cast` cue (`src/vfx.rs::cue_on_cast`) can scale its cosmetics the same way the cast
+    /// itself scaled damage/speed. `None` = uncharged.
+    pub charge: Option<u8>,
 }
 
 #[derive(Event, Clone, Debug)]
@@ -220,4 +224,12 @@ pub struct CueEvent {
     /// origin, `position` = the victim). `None` for ordinary single-point cues.
     pub position_from: Option<Vec3>,
     pub kind: CueKind,
+    /// The originating cast's charge, forwarded to EVERY cue slot (cast/window/hit/end/emit) so
+    /// presentation can scale cosmetics the same way the cast itself scaled damage/speed
+    /// (phase-3 prerequisite: `ParamSource::Charge` cue bindings). `None` = uncharged.
+    pub charge: Option<u8>,
+    /// Set ONLY on `CueKind::OnEnd` cues (from the terminating `HitboxEnded.reason`) so
+    /// presentation can react differently to `HitEntity`/`HitWorld`/`Fuse` (phase-3
+    /// prerequisite: reason-aware presentation). `None` for every other cue kind.
+    pub end_reason: Option<EndReason>,
 }

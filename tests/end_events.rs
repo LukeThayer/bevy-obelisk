@@ -67,7 +67,10 @@ fn bolt_timeline(bolt_duration: f32) -> CastTimeline {
         },
         collision_windows: vec![bolt],
         acquisition: Default::default(),
-        vfx_cues: HashMap::from([("on_end_bolt".to_string(), "firebolt_boom".to_string())]),
+        vfx_cues: HashMap::from([
+            ("on_end_bolt".to_string(), "firebolt_boom".to_string()),
+            ("on_cast".to_string(), "firebolt_cast".to_string()),
+        ]),
         chain_radius: 6.0,
         chargeable: false,
         max_hold: 1.0,
@@ -256,6 +259,66 @@ fn hit_and_end_events_carry_position_and_depth() {
         .find(|e| e.window_id == "bolt")
         .expect("an end");
     assert_eq!(ended.depth, 0);
+}
+
+/// Task 1 (phase-3 prerequisite): every cue slot carries the cast's charge, and the `on_end_{id}`
+/// cue additionally carries the terminating `EndReason`. Full-charge cast (255) + a long fuse
+/// aimed away so the HOST reports a world impact — mirrors
+/// `host_world_hit_ends_with_hit_world_at_the_impact_point`'s pattern exactly, just charged.
+#[test]
+fn on_cast_cue_carries_charge_and_on_end_cue_carries_charge_and_end_reason() {
+    let (mut t, player, _dummy) = setup(29, bolt_timeline(5.0));
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir_charged("firebolt", Dir3::X, 255);
+    t.advance_ticks(10); // window is open, bolt in flight
+
+    let hitbox = t
+        .app
+        .world_mut()
+        .query_filtered::<Entity, With<obelisk_bevy::prelude::Hitbox>>()
+        .single(t.app.world())
+        .expect("bolt hitbox in flight");
+    let impact = Vec3::new(1.2, 0.0, 0.0);
+    t.app.world_mut().trigger(HitboxWorldHit {
+        hitbox,
+        position: impact,
+    });
+    t.advance_ticks(5);
+
+    let rec = t.rec();
+    let on_cast_cue = rec
+        .cues
+        .iter()
+        .find(|c| c.cue_id == "firebolt_cast")
+        .expect("on_cast cue fires");
+    assert_eq!(
+        on_cast_cue.charge,
+        Some(255),
+        "the on_cast cue carries the cast's charge"
+    );
+    assert_eq!(
+        on_cast_cue.end_reason, None,
+        "a non-OnEnd cue never carries an end reason"
+    );
+
+    let end_cue = rec
+        .cues
+        .iter()
+        .find(|c| c.cue_id == "firebolt_boom")
+        .expect("on_end_bolt cue fires");
+    assert_eq!(
+        end_cue.charge,
+        Some(255),
+        "the on_end cue keeps carrying the cast's charge"
+    );
+    assert_eq!(
+        end_cue.end_reason,
+        Some(EndReason::HitWorld),
+        "the on_end cue carries the terminating EndReason"
+    );
 }
 
 /// Schema v2 `strikes` gate: a `strikes: false` zone sitting ON TOP of a dummy never produces a
