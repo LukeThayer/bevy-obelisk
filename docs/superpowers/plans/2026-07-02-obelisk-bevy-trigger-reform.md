@@ -284,11 +284,14 @@ fn hit_outcome_exposes_packet_and_pre_hit_snapshots() {
 - Test: `~/src/obelisk-bevy/tests/end_events.rs` or new `tests/triggered_exec.rs`
 
 **Interfaces:**
-- Consumes: `HitConfirmed.depth` (Task 3).
-- Produces: hits with `depth > 0` resolve against a `Skill` clone with `mana_cost = 0.0`
+- Consumes: `HitConfirmed.depth` (Task 3), `Hitbox.hop` (existing).
+- Produces: the **billing rule** (spec §3.2): mana bills per-hit only for the cast's
+  scheduled windows. `fn is_free_hit(ev: &HitConfirmed) -> bool { ev.depth > 0 || ev.hop > 0 }`
+  (Task 11 extends it with `|| ev.emitted`; `HitConfirmed` gains `hop: u8` copied from the
+  hitbox in this task) — free hits resolve against a `Skill` clone with `mana_cost = 0.0`
   (helper `fn free_clone(skill: &Skill) -> Skill`). No `Cooldowns::start` for sub-casts
-  (cooldowns are started at cast time in `advance.rs` — sub-casts never pass through there,
-  so nothing to change; assert it in the test).
+  (cooldowns start at cast time in `advance.rs` — sub-casts never pass through there;
+  assert it in the test).
 
 - [ ] **Step 1: Failing test** (`tests/triggered_exec.rs`, new file using the end_events harness pattern):
 
@@ -310,11 +313,11 @@ fn depth_gt_zero_hits_do_not_bill_or_fizzle_on_mana() {
 - [ ] **Step 3: Implement** in `on_hit_confirmed`, before resolve:
 
 ```rust
-let skill_for_resolve = if ev.depth > 0 { free_clone(skill) } else { skill.clone() };
+let skill_for_resolve = if is_free_hit(&ev) { free_clone(skill) } else { skill.clone() };
 ```
 
 with `fn free_clone(s: &Skill) -> Skill { let mut c = s.clone(); c.mana_cost = 0.0; c }`.
-(The clone also becomes the site of Task 6's condition stripping — one clone, two edits.)
+(The clone also becomes the site of Task 7's condition stripping — one clone, two edits.)
 
 - [ ] **Step 4: Run + suite** → PASS; goldens untouched (no depth>0 hits exist in scenarios yet).
 
@@ -655,7 +658,12 @@ fn cast_point_anchor_in_aim_skill_fails_validation() { /* validate_timeline erro
   ```
   A live hitbox whose window has an emitter spawns one instance of the named `Template`
   window every `1/rate` seconds at `hitbox_pos + jitter_offset` (xz disc sample from
-  `SpawnRng`), depth inherited, `emit` cue fired at the spawn point.
+  `SpawnRng`), depth inherited, `Hitbox.emitted = true` (extends Task 5's `is_free_hit`
+  with `|| ev.emitted` — shard hits never bill mana). Emitted instances fire the
+  `emit_{id}` cue ONLY (never `window_open`). Validation additions: emitter target exists
+  and is `Template`; `Template` windows are emitter-referenced; **`Template` windows may
+  not themselves carry emitters** (spec §3.2's Template→Template recursion guard — test:
+  a self-emitting template fails `validate_timeline`).
 
 - [ ] **Step 1: Failing tests**
 
@@ -708,7 +716,10 @@ fn spawn_rng_does_not_perturb_combat_rng() {
 
 - [ ] **Step 3: Implement** per Produces (the search fn `nearest_retarget_candidate` survives unchanged).
 
-- [ ] **Step 4: Run + goldens** (chain_lightning scenario trace regenerates if hop timing shifted a tick — explain in commit; damage totals must be identical).
+- [ ] **Step 4: Run + goldens** — the chain_lightning trace regenerates deliberately:
+  hops (`hop > 0`) now resolve mana-free per the spec's billing rule (previously each hop
+  billed per-hit), so `mana_spent` on hop DamageResolved lines drops to 0; damage totals
+  must be identical. Explain both in the commit message.
 
 - [ ] **Step 5: Commit** — `git commit -am "feat(spatial): chain hops driven by rules can_chain/chain_count within behavior chain_radius (spec D5)"`
 

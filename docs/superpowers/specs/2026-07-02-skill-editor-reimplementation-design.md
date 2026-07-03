@@ -108,10 +108,14 @@ unpatched stat_core hard-fails on `type = "on_impact"` TOMLs.
   and on match execute the target skill's timeline at the payload. Without one: today's
   path, unchanged. Execution = spawn the skill's scheduled windows on a virtual clock from
   the trigger instant (spawn offsets honored), anchors resolved with cast-point = payload
-  position, `depth + 1`. **Free means free**: hits from `depth > 0` hitboxes resolve with
-  `mana_cost` zeroed on the same `Skill` clone (a sub-cast never bills or fizzles on the
-  caster's mana; standalone casts of the same skill stay paid). Needs a pub spawn entry
-  (today `spawn_window_hitbox` is pub(crate), `advance.rs:307`).
+  position, `depth + 1`. **Free means free — and the billing rule is explicit**: mana bills
+  per-hit only for hits from the cast's *scheduled* windows (today's semantics, golden-
+  preserved); hits from `depth > 0` sub-casts, chain re-strikes (`hop > 0`), and emitted
+  instances all resolve with `mana_cost` zeroed on the same `Skill` clone — a 3-hop chain
+  bills once at cast, a raining blizzard never drains mana per shard. (The chain_lightning
+  golden migrates accordingly in the same series, explained in its commit.) Standalone
+  casts of a triggered skill stay paid. Needs a pub spawn entry (today
+  `spawn_window_hitbox` is pub(crate), `advance.rs:307`).
 - **Zero-damage carriers work**: `HitConfirmed` fires from spatial detection regardless of
   packet contents, and condition evaluation does not depend on a nonzero packet — a
   no-damage bolt still triggers its explosion (golden-covered).
@@ -127,7 +131,9 @@ unpatched stat_core hard-fails on `type = "on_impact"` TOMLs.
     in spirit, minus causality); `anchor: Caster | CastPoint` (+ local offset);
     `strikes: bool` (default true; `false` = carrier volume, skipped by detection);
     optional `emitter: { rate, jitter, window }` (emitted instances anchor at the jittered
-    emission point); optional motion direction override (`Down` for shards).
+    emission point; **`Template` windows may not themselves carry emitters** — v1's guard
+    against `Template→Template` spawn recursion, enforced by validation); optional motion
+    direction override (`Down` for shards).
   - Acquisition: `Aim | HitscanEntity { range, filter } | GroundPoint { range } |
     SelfPoint`; only the fallible variants (`HitscanEntity`, `GroundPoint`) carry
     `fallback: Fizzle | <acquisition>`. The acquired point survives end-to-end (today
@@ -138,10 +144,17 @@ unpatched stat_core hard-fails on `type = "on_impact"` TOMLs.
     | Slot | Fires | Payload | Binding options |
     |---|---|---|---|
     | `cast` | cast begins | caster pos, charge | Effect at caster; anim (editor-only) |
-    | `window_open:<id>` | window/instance spawns (incl. each chain strike) | pos, dir, charge; beams: `from`+`to`; projectiles: speed/gravity | Effect at pos; `attach: World \| Follow` (Follow = host flies a proxy along the cue's motion data; the end cue snaps + terminates it — today's pattern, kept) |
-    | `hit` | each hit confirm | victim pos, charge | Effect at victim |
-    | `end:<id>` | hitbox ends | end pos, `EndReason`, charge | Effect at end pos |
-    | `emit:<id>` | emitter instantiates a template | spawn pos, charge | Effect at spawn pos |
+    | `window_open:<id>` | a **scheduled** window or chain re-strike spawns | pos, dir, charge; beams: `from`+`to`; projectiles: speed/gravity | Effect at pos; `attach: World \| Follow` |
+    | `hit` | each hit confirm | victim pos, charge | Effect at victim (world-anchored) |
+    | `end:<id>` | hitbox ends | end pos, `EndReason`, charge | Effect at end pos (world-anchored) |
+    | `emit:<id>` | emitter instantiates a template (**emitted instances fire `emit` ONLY, never `window_open`**) | spawn pos, motion, charge | same options as `window_open` (incl. Follow) |
+
+    The table is **normative for each slot's legal binding options** (the Presentation UI
+    offers exactly these): attachment is authorable on `window_open`/`emit` only; anim on
+    `cast` only. `Follow` = the host flies a proxy along the cue's motion data, and the
+    window's end **event** snaps + terminates it — the event fires regardless of whether an
+    `end:<id>` *binding* is authored (so fireball's trail terminates even though fireball
+    authors no end binding).
 
   - `validate_timeline` v2: emitter targets exist and are `Template`; `Template` windows
     are referenced by an emitter; acquisition fallback chains terminate; presentation
@@ -181,9 +194,11 @@ unpatched stat_core hard-fails on `type = "on_impact"` TOMLs.
   both with and without. The ~6 hard-coded mode sites (enum + `panel_side`, hotkey block,
   status bar, hints, UiPlugin registration, EditorPlugin composition).
 - **`SkillLibrary`**: skill id → three-layer bundle. A **content root** is a directory
-  containing `config/skills/` + `assets/skills/` subtrees; hosts register roots via
-  `register_obelisk_content(root)`; the first root is the default write target for new
-  skills. Palette: browse + "New Skill" archetype templates (strike/projectile/zone/beam —
+  containing `config/skills/`, `assets/skills/`, `assets/effects/`, and `assets/vfx/`
+  subtrees; hosts register roots via `register_obelisk_content(root)`, which feeds the
+  Skill library **and** the `bevy_effect`/`bevy_vfx` library initializers — editor and game
+  make the same call, so preset discovery is one mechanism. The first root is the default
+  write target for new skills. Palette: browse + "New Skill" archetype templates (strike/projectile/zone/beam —
   playable defaults; templates ship with starter Effect presets registered from the same
   roots so a fresh install isn't born dangling). Lifecycle ops: duplicate, rename, delete —
   each runs a back-reference check first ("3 skills trigger this — really delete?").
@@ -203,9 +218,10 @@ unpatched stat_core hard-fails on `type = "on_impact"` TOMLs.
   event markers (including trigger-firing markers). **Strip extent = the base timeline plus
   a trailing sub-cast region** (dynamic end = last sim entity settled, capped); scrubbing
   fireball past impact shows the explosion because the sub-cast executes inside the same
-  frozen-seek sim. **Preview acquisition resolution is stage-provided** (scripted aim at
-  the dummy line / ground point at the stage marker), so the Skill mode works in bare
-  bevy_modal_editor with no game host. **Dummy auto-sync rules**: target count =
+  frozen-seek sim. **Preview acquisition resolution AND world-impact reporting are
+  stage-provided** (scripted aim at the dummy line / ground point at the stage marker, plus
+  the flat-floor `HitboxWorldHit` reporter — without it `OnImpact` could never scrub), so
+  the Skill mode works in bare bevy_modal_editor with no game host. **Dummy auto-sync rules**: target count =
   `chain_count + 1` placed within `chain_radius` for chain skills; `GroundPoint` skills get
   dummies under the default aim point; manual add/move stays as the escape hatch.
 - **Validation**: `ValidationRegistry` rules — dangling `trigger_skill`; Lifecycle-target
@@ -220,10 +236,11 @@ unpatched stat_core hard-fails on `type = "on_impact"` TOMLs.
 ### 3.4 obelisk-arena
 
 - `arena_editor` → composition shell: `EditorPlugin` (+`obelisk`) + `GamePlugin` + content
-  root registration + arena host bits (flat-floor `HitboxWorldHit` reporter, camera-ray
-  acquisition provider — moved here from `arena_game`'s cast pipeline in this phase). The
-  skill-designer modules (~15 files) are deleted; preview-substrate tests port upstream
-  with the substrate.
+  root registration + arena host bits. The camera-ray/ground-point acquisition resolver
+  moves from `arena_game`'s cast pipeline into a **shared host helper (obelisk-bevy or
+  arena_sim)** consumed by both `arena_game`'s server and the editor stage — it cannot live
+  in the editor shell, which the game does not depend on. The skill-designer modules
+  (~15 files) are deleted; preview-substrate tests port upstream with the substrate.
 - **Cue wire contract** (replaces `arena_skills::CueMessage`/`.skillfx` lookup): the server
   relays obelisk `CueEvent`s as `slot id + payload` (positions/`from`+`to`/charge/reason) —
   it stays generic, so triggered sub-cast, chain-hop, and emitter cues replicate with zero
@@ -288,7 +305,8 @@ node-graph-canvas UX direction.
 - **Golden churn** — every trace change is a reviewed, explained diff tied to a content
   migration.
 - **Resolve-seam widening** (§3.2) is the highest-risk sim change — it touches the exact
-  path all 39 golden scenarios exercise; it lands first in the phase-2 series with goldens
-  proving byte-identical behavior for non-timeline content.
+  path all 39 golden scenarios exercise; it lands at the head of the phase-2 series,
+  immediately after the mechanical payload plumbing, with goldens proving byte-identical
+  behavior for non-timeline content.
 - **Preview port regressions** — the substrate's invariants are documented in the port and
   its determinism tests come along.
