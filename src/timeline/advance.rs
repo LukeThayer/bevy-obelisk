@@ -1,6 +1,6 @@
 use crate::assets::{
-    CastTargeting, CastTimeline, CastTimelineHandles, CollisionWindow, EndReaction, VolumeMotion,
-    WindowPhase,
+    CastTargeting, CastTimeline, CastTimelineHandles, CollisionWindow, EndReaction, PhaseDurations,
+    VolumeMotion, WindowPhase,
 };
 use crate::core::components::Attributes;
 use crate::core::config::SkillRegistry;
@@ -253,15 +253,20 @@ pub fn advance_casts(
             if cast.fired_windows.contains(&win.id) {
                 continue;
             }
-            let base = match win.spawn_phase {
-                WindowPhase::Windup => 0.0,
-                WindowPhase::Active => cast.windup,
-                WindowPhase::Recovery => cast.windup + cast.active,
-                // Chained windows are never on the phase schedule — they spawn from a parent
-                // window's `on_end` (see `end_hitboxes`).
-                WindowPhase::Chained => continue,
+            // Chained windows are never on the phase schedule — they spawn from a parent
+            // window's `on_end` (see `end_hitboxes`).
+            if win.spawn_phase == WindowPhase::Chained {
+                continue;
+            }
+            // The cast's phase durations are already speed-scaled (`ActiveCast::windup` etc. —
+            // snapshotted at cast start via `scale_durations`); `window_start_time` just adds
+            // the (unscaled) authored `spawn_offset` on top, exactly as this math did inline.
+            let effective = PhaseDurations {
+                windup: cast.windup,
+                active: cast.active,
+                recovery: cast.recovery,
             };
-            let start = base + win.spawn_offset;
+            let start = window_start_time(&effective, win);
             if prev_elapsed < start && cast.elapsed >= start {
                 cast.fired_windows.push(win.id.clone());
                 spawn_window_hitbox(
@@ -288,6 +293,26 @@ pub fn advance_casts(
         }
         let _ = &registry; // kept for future use_conditions re-checks
     }
+}
+
+/// The elapsed-time at which an authored collision window becomes eligible to spawn, given a
+/// cast's phase durations. Pure extraction of `advance_casts`' inline spawn-time math (used
+/// there with the cast's SPEED-SCALED effective durations) — also used by the triggered-timeline
+/// executor (`advance_triggered_execs`, Task 6), which passes the UNSCALED authored durations: a
+/// triggered explosion runs on its own virtual clock and does not inherit the caster's cast/
+/// attack speed. Callers must skip `WindowPhase::Chained` windows before calling this (they are
+/// never on the phase schedule — they only spawn from a parent window's `on_end`).
+pub(crate) fn window_start_time(durations: &PhaseDurations, win: &CollisionWindow) -> f32 {
+    let base = match win.spawn_phase {
+        WindowPhase::Windup => 0.0,
+        WindowPhase::Active => durations.windup,
+        WindowPhase::Recovery => durations.windup + durations.active,
+        WindowPhase::Chained => {
+            debug_assert!(false, "window_start_time called on a Chained window");
+            0.0
+        }
+    };
+    base + win.spawn_offset
 }
 
 /// The chain payload a spawned window inherits: who to strike (beams), how many hops came
@@ -425,10 +450,7 @@ pub fn end_hitboxes(
                 .and_then(|w| w.on_end.for_reason(reason));
             match reaction {
                 Some(EndReaction::Chain(next_id)) => {
-                    if let Some(next) = timeline
-                        .collision_windows
-                        .iter()
-                        .find(|w| &w.id == next_id)
+                    if let Some(next) = timeline.collision_windows.iter().find(|w| &w.id == next_id)
                     {
                         spawn_window_hitbox(
                             &mut commands,
@@ -452,10 +474,7 @@ pub fn end_hitboxes(
                     radius,
                     max_hops,
                 }) if hb.hop < *max_hops => {
-                    if let Some(next) = timeline
-                        .collision_windows
-                        .iter()
-                        .find(|w| &w.id == window)
+                    if let Some(next) = timeline.collision_windows.iter().find(|w| &w.id == window)
                     {
                         // Everything this chain has struck so far (earlier hitboxes'
                         // victims + this one's own) is off-limits.
@@ -562,7 +581,68 @@ fn nearest_retarget_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::CastTargeting;
+    use crate::assets::{CastTargeting, CollisionShape, HitFilter, HitMode, OnEnd};
+
+    fn durations() -> PhaseDurations {
+        PhaseDurations {
+            windup: 0.3,
+            active: 0.5,
+            recovery: 0.2,
+        }
+    }
+
+    fn window(phase: WindowPhase, offset: f32) -> CollisionWindow {
+        CollisionWindow {
+            id: "w".into(),
+            spawn_phase: phase,
+            spawn_offset: offset,
+            active_duration: 1.0,
+            shape: CollisionShape::Sphere { radius: 0.5 },
+            motion: VolumeMotion::Static,
+            hit_filter: HitFilter::Enemies,
+            hit_mode: HitMode::OncePerTarget,
+            rehit_interval: None,
+            on_end: OnEnd::default(),
+        }
+    }
+
+    #[test]
+    fn window_start_time_windup_is_zero_plus_offset() {
+        assert_eq!(
+            window_start_time(&durations(), &window(WindowPhase::Windup, 0.0)),
+            0.0
+        );
+        assert_eq!(
+            window_start_time(&durations(), &window(WindowPhase::Windup, 0.1)),
+            0.1
+        );
+    }
+
+    #[test]
+    fn window_start_time_active_starts_after_windup() {
+        let d = durations();
+        assert_eq!(
+            window_start_time(&d, &window(WindowPhase::Active, 0.0)),
+            d.windup
+        );
+        assert_eq!(
+            window_start_time(&d, &window(WindowPhase::Active, 0.05)),
+            d.windup + 0.05
+        );
+    }
+
+    #[test]
+    fn window_start_time_recovery_starts_after_windup_plus_active() {
+        let d = durations();
+        assert_eq!(
+            window_start_time(&d, &window(WindowPhase::Recovery, 0.0)),
+            d.windup + d.active
+        );
+        assert_eq!(
+            window_start_time(&d, &window(WindowPhase::Recovery, 0.25)),
+            d.windup + d.active + 0.25
+        );
+    }
 
     #[test]
     fn self_cast_has_no_range_gate() {

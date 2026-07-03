@@ -131,6 +131,7 @@ impl Plugin for ObeliskSimPlugin {
                 (
                     timeline::advance::advance_casts,
                     timeline::advance::end_hitboxes,
+                    timeline::triggered::advance_triggered_execs,
                 )
                     .in_set(ObeliskSet::Advance),
                 spatial::projectile::move_projectiles.in_set(ObeliskSet::Projectiles),

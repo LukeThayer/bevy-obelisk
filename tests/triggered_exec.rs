@@ -5,9 +5,14 @@
 #![cfg(feature = "test-support")]
 
 use bevy::prelude::*;
+use obelisk_bevy::assets::{
+    CastDelivery, CastTargeting, CollisionShape, CollisionWindow, HitFilter, HitMode, OnEnd,
+    PhaseDurations, VolumeMotion, WindowPhase,
+};
 use obelisk_bevy::prelude::*;
 use obelisk_bevy::testkit::ObeliskTestApp;
 use stat_core::StatBlock;
+use std::collections::HashMap;
 
 fn make_block(id: &str, life: f64, mana: f64) -> StatBlock {
     let mut b = StatBlock::with_id(id);
@@ -151,5 +156,166 @@ fn free_sub_cast_hit_does_not_start_a_cooldown() {
     assert!(
         cooldowns.is_ready(player, "firebolt"),
         "a free sub-cast hit must never start a cooldown"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Task 6 — the public triggered-timeline executor (spec §3.2). `execute_skill_timeline` spawns
+// a skill's collision windows at an arbitrary world position on a virtual clock, detached from
+// any caster's cast-state. These tests drive it directly (no trigger wiring exists yet — that's
+// later tasks).
+// ---------------------------------------------------------------------------------------------
+
+/// One authored collision window: `Active` phase, `Static` motion (no projectile drift — makes
+/// spawn position assertions exact), a short `active_duration` so window A can fully expire
+/// (fuse out) before window B's later offset fires — the executor's despawn/skip bookkeeping
+/// must not depend on A's hitbox still existing when B spawns.
+fn window(id: &str, offset: f32) -> CollisionWindow {
+    CollisionWindow {
+        id: id.into(),
+        spawn_phase: WindowPhase::Active,
+        spawn_offset: offset,
+        active_duration: 0.15,
+        shape: CollisionShape::Sphere { radius: 0.5 },
+        motion: VolumeMotion::Static,
+        hit_filter: HitFilter::Enemies,
+        hit_mode: HitMode::OncePerTarget,
+        rehit_interval: None,
+        on_end: OnEnd::default(),
+    }
+}
+
+/// A "two-window skill": window A at offset 0.0, window B at offset 0.5 — both `Active` phase
+/// off a zero-windup/zero-recovery timeline, so their spawn-eligible times ARE their offsets.
+fn two_window_timeline() -> CastTimeline {
+    CastTimeline {
+        skill_id: "test_skill".into(),
+        phase_durations: PhaseDurations {
+            windup: 0.0,
+            active: 1.0,
+            recovery: 0.0,
+        },
+        collision_windows: vec![window("a", 0.0), window("b", 0.5)],
+        targeting: CastTargeting::SelfCast,
+        delivery: CastDelivery::Instant,
+        vfx_cues: HashMap::new(),
+    }
+}
+
+/// A bare test app with `test_skill`'s two-window timeline registered in `CastTimelineHandles` /
+/// `Assets<CastTimeline>` (mirrors how `tests/beam_retarget.rs::setup` inserts timelines
+/// programmatically) — no `SkillRegistry` entry needed since `execute_skill_timeline` never
+/// passes through `validate_casts`.
+fn harness_with_two_window_skill() -> ObeliskTestApp {
+    let mut t = ObeliskTestApp::new(1);
+    let handle = t
+        .app
+        .world_mut()
+        .resource_mut::<Assets<CastTimeline>>()
+        .add(two_window_timeline());
+    t.app
+        .world_mut()
+        .resource_mut::<CastTimelineHandles>()
+        .0
+        .insert("test_skill".into(), handle);
+    t.app.update();
+    t
+}
+
+/// Wraps `execute_skill_timeline` through world commands (a fresh, component-less caster entity
+/// — attribution only, unused by these assertions), then flushes so the `TriggeredExec` entity
+/// exists before the next tick.
+fn exec_timeline(t: &mut ObeliskTestApp, skill_id: &str, position: Vec3, depth: u8) -> Entity {
+    let caster = t.app.world_mut().spawn_empty().id();
+    let mut commands = t.app.world_mut().commands();
+    execute_skill_timeline(
+        &mut commands,
+        caster,
+        skill_id,
+        ExecPayload {
+            position,
+            direction: Vec3::Z,
+            target: None,
+            charge: None,
+            depth,
+        },
+    );
+    t.app.world_mut().flush();
+    caster
+}
+
+fn app_step(t: &mut ObeliskTestApp, n: usize) {
+    t.advance_ticks(n);
+}
+
+/// Advances by (at least) `secs` of fixed-tick time — the harness ticks at a fixed 1/60s.
+fn app_step_secs(t: &mut ObeliskTestApp, secs: f32) {
+    let ticks = ((secs * 60.0).ceil() as usize).max(1);
+    t.advance_ticks(ticks);
+}
+
+/// Live hitbox entity count (a window may have already fused out by the time a later window
+/// spawns — use `hitbox_count_total_seen` for a cumulative count).
+fn hitbox_count(t: &ObeliskTestApp) -> usize {
+    let mut q = t
+        .app
+        .world()
+        .try_query_filtered::<Entity, With<Hitbox>>()
+        .expect("Hitbox query builds");
+    q.iter(t.app.world()).count()
+}
+
+/// Total distinct hitbox windows ever opened, via the `HitWindowOpened` event recorder — robust
+/// to a window having already expired (and its hitbox despawned) by the time a later window
+/// spawns.
+fn hitbox_count_total_seen(t: &ObeliskTestApp) -> usize {
+    t.rec().hit_window_opened.len()
+}
+
+/// World position of the `idx`-th live hitbox (by entity iteration order).
+fn hitbox_pos(t: &ObeliskTestApp, idx: usize) -> Vec3 {
+    let mut q = t
+        .app
+        .world()
+        .try_query_filtered::<&Transform, With<Hitbox>>()
+        .expect("Hitbox query builds");
+    q.iter(t.app.world())
+        .nth(idx)
+        .expect("a live hitbox at this index")
+        .translation
+}
+
+#[test]
+fn executor_spawns_windows_at_payload_honoring_offsets() {
+    let mut t = harness_with_two_window_skill();
+    exec_timeline(&mut t, "test_skill", Vec3::new(3.0, 1.0, 0.0), 1);
+
+    app_step(&mut t, 1); // one fixed tick: window A's offset (0.0) is already elapsed
+    assert_eq!(hitbox_count(&t), 1, "window A immediate");
+    let pos = hitbox_pos(&t, 0);
+    assert!(
+        (pos - Vec3::new(3.0, 1.0, 0.0)).length() < 0.1,
+        "spawned AT the payload, got {pos:?}"
+    );
+
+    app_step_secs(&mut t, 0.6); // past window B's 0.5s offset (and past A's 0.15s fuse)
+    assert_eq!(
+        hitbox_count_total_seen(&t),
+        2,
+        "window B opens after its offset, even though A has since expired"
+    );
+}
+
+#[test]
+fn executor_drops_at_depth_cap_with_warning() {
+    let mut t = harness_with_two_window_skill();
+    exec_timeline(&mut t, "test_skill", Vec3::ZERO, MAX_TRIGGER_DEPTH);
+
+    app_step(&mut t, 5);
+    assert_eq!(hitbox_count(&t), 0, "cap drops, never spawns");
+    assert_eq!(
+        hitbox_count_total_seen(&t),
+        0,
+        "cap drops before any window ever opens"
     );
 }
