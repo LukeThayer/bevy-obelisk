@@ -440,6 +440,53 @@ mod tests {
         assert!(validate_timeline(&timeline_with(basic_window("w"))).is_ok());
     }
 
+    fn cast_point_window(id: &str) -> CollisionWindow {
+        CollisionWindow {
+            anchor: WindowAnchor::CastPoint,
+            ..basic_window(id)
+        }
+    }
+
+    /// `GroundPoint`'s own success always produces a cast point, so a `CastPoint`-anchored
+    /// window is reachable directly — no fallback needed.
+    #[test]
+    fn cast_point_window_with_ground_point_acquisition_validates() {
+        let tl = CastTimeline {
+            acquisition: Acquisition::GroundPoint {
+                range: 30.0,
+                fallback: AcqFallback::Fizzle,
+            },
+            ..timeline_with(cast_point_window("storm"))
+        };
+        assert!(validate_timeline(&tl).is_ok());
+    }
+
+    /// `HitscanEntity`'s own success never produces a point, but its `Then` fallback chain
+    /// bottoms out at `SelfPoint`, which always can — the point-producer is reached only by
+    /// walking the chain, not the branch's own success.
+    #[test]
+    fn cast_point_window_reachable_via_fallback_chain_validates() {
+        let tl = CastTimeline {
+            acquisition: Acquisition::HitscanEntity {
+                range: 15.0,
+                filter: HitFilter::Enemies,
+                fallback: AcqFallback::Then(Box::new(Acquisition::SelfPoint)),
+            },
+            ..timeline_with(cast_point_window("storm"))
+        };
+        assert!(validate_timeline(&tl).is_ok());
+    }
+
+    /// `SelfPoint` is unconditional — always reaches a `CastPoint`-anchored window.
+    #[test]
+    fn self_point_acquisition_validates() {
+        let tl = CastTimeline {
+            acquisition: Acquisition::SelfPoint,
+            ..timeline_with(cast_point_window("storm"))
+        };
+        assert!(validate_timeline(&tl).is_ok());
+    }
+
     #[test]
     fn loads_firebolt_cast_ron() {
         let mut app = App::new();
