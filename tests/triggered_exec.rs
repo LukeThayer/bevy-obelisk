@@ -640,7 +640,10 @@ fn hit_trigger_with_timeline_executes_spatially_not_as_packet() {
         .iter()
         .map(|d| d.skill_id.as_str())
         .collect();
-    assert!(ids.contains(&"fireball"), "bolt contact damage, got {ids:?}");
+    assert!(
+        ids.contains(&"fireball"),
+        "bolt contact damage, got {ids:?}"
+    );
     assert!(
         ids.contains(&"fireball_explosion"),
         "explosion resolved via ITS OWN timeline, got {ids:?}"
