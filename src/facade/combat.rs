@@ -2,7 +2,7 @@ use crate::assets::CastTimelineHandles;
 use crate::combat::resolve::resolve_one_hit;
 use crate::combat::system::{
     eval_condition_obelisk_side, is_invalid_timeline_target, is_unsupported_timeline_condition,
-    partition_conditions,
+    partition_conditions, WarnedConditions,
 };
 use crate::core::components::Attributes;
 use crate::core::config::{CombatRng, SkillRegistry};
@@ -36,6 +36,9 @@ pub struct ObeliskCombat<'w, 's> {
     registry: Res<'w, SkillRegistry>,
     handles: Res<'w, CastTimelineHandles>,
     rng: ResMut<'w, CombatRng>,
+    // Ticket 5 (phase-3 prerequisite): shares the SAME resource `on_hit_confirmed` throttles
+    // through — see `combat::system::WarnedConditions`'s doc.
+    warned: ResMut<'w, WarnedConditions>,
     commands: Commands<'w, 's>,
 }
 
@@ -58,7 +61,11 @@ impl ObeliskCombat<'_, '_> {
         let (timeline_targets, packet_conditions) =
             partition_conditions(&skill.conditions, &self.handles);
         for cond in &timeline_targets {
-            if is_invalid_timeline_target(cond, &self.handles) {
+            if is_invalid_timeline_target(cond, &self.handles)
+                && self
+                    .warned
+                    .should_warn("additional", skill_id, &cond.trigger_skill)
+            {
                 warn!(
                     "facade: skill '{}' condition triggers timeline skill '{}' with additional \
                      = false — timeline-target conditions must be additional = true (v1); \
@@ -66,7 +73,11 @@ impl ObeliskCombat<'_, '_> {
                     skill_id, cond.trigger_skill
                 );
             }
-            if is_unsupported_timeline_condition(cond, &self.handles) {
+            if is_unsupported_timeline_condition(cond, &self.handles)
+                && self
+                    .warned
+                    .should_warn("unsupported", skill_id, &cond.trigger_skill)
+            {
                 warn!(
                     "facade: skill '{}' condition triggers timeline skill '{}' using \
                      EveryNthHit — forbidden on timeline-target conditions (v1, spec §3.2); \

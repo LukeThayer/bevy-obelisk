@@ -213,6 +213,7 @@ pub fn validate_casts(
             caster,
             skill_id: req.skill_id.clone(),
             total_duration: windup + active + recovery,
+            charge: req.charge,
         });
         let cd = skill.effective_cooldown(attrs.0.cooldown_reduction) as f32;
         if cd > 0.0 {
