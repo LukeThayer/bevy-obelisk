@@ -26,7 +26,7 @@ skill designer.
 ## (a) `arena_editor` → composition shell
 
 Spec estimated "~15 files" to delete. Direct count at stub-writing time
-(`~/src/obelisk-arena/crates/arena_editor/src/`, 27 files total) says **25**, not ~15 — every
+(`~/src/obelisk-arena/crates/arena_editor/src/`, 28 files total) says **26**, not ~15 — every
 `.rs` file except `lib.rs`/`main.rs`:
 
 ```
