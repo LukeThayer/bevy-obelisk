@@ -232,4 +232,7 @@ pub struct CueEvent {
     /// presentation can react differently to `HitEntity`/`HitWorld`/`Fuse` (phase-3
     /// prerequisite: reason-aware presentation). `None` for every other cue kind.
     pub end_reason: Option<EndReason>,
+    /// The originating skill id, so a multi-skill presentation host can resolve the right
+    /// timeline's `cues` binding for this cue (cue_id == slot is not unique across skills).
+    pub skill_id: String,
 }

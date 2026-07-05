@@ -72,6 +72,7 @@ fn cue_on_cast(
             kind: CueKind::OnCast,
             charge: e.charge,
             end_reason: None,
+            skill_id: e.skill_id.clone(),
         });
     }
 }
@@ -127,6 +128,7 @@ fn cue_on_window(
             kind,
             charge,
             end_reason: None,
+            skill_id: e.skill_id.clone(),
         });
     }
 }
@@ -151,6 +153,7 @@ fn cue_on_end(
             kind: CueKind::OnEnd,
             charge: e.charge,
             end_reason: Some(e.reason),
+            skill_id: e.skill_id.clone(),
         });
     }
 }
@@ -176,6 +179,7 @@ fn cue_on_hit(
             kind: CueKind::OnHit,
             charge: e.charge,
             end_reason: None,
+            skill_id: e.skill_id.clone(),
         });
     }
 }
