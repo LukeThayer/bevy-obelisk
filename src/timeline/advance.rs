@@ -388,7 +388,15 @@ pub fn advance_casts(
                 recovery: cast.recovery,
             };
             let start = window_start_time(&effective, win);
-            if prev_elapsed < start && cast.elapsed >= start {
+            // Crossed this tick — PLUS the zero-boundary: a window whose start time is exactly
+            // 0.0 (windup 0.0 + offset 0.0, e.g. an instant blast) can never satisfy
+            // `prev_elapsed < 0.0`, so without the second arm it NEVER spawns on the direct-cast
+            // path (the triggered executor was unaffected — this is why firebolt_explosion
+            // worked in-game, where it is always triggered, but not when cast directly in the
+            // editor preview). `fired_windows` above guards re-fire.
+            if (prev_elapsed < start && cast.elapsed >= start)
+                || (start == 0.0 && prev_elapsed == 0.0)
+            {
                 cast.fired_windows.push(win.id.clone());
                 // Anchor resolution for a player cast (Task 10): `Caster` spawns at the caster's
                 // origin + muzzle offset (unchanged); `CastPoint` spawns at the cast's ACQUIRED

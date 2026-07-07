@@ -376,3 +376,49 @@ fn non_striking_windows_never_hit() {
     );
     assert_eq!(ended_carrier, 1, "the carrier zone still ends (fuse) once");
 }
+
+/// REGRESSION (zero-boundary window spawn): a window whose start time is exactly 0.0
+/// (windup 0.0 + `Scheduled { Active, offset: 0.0 }` — an instant blast like obelisk-arena's
+/// firebolt_explosion) must open on the FIRST advance tick of a DIRECT cast. The crossing test
+/// `prev_elapsed < start` alone can never be true for `start == 0.0`, so such windows silently
+/// never spawned (no hitbox, no cue, no damage) when cast directly — the editor preview's
+/// direct-cast path. The triggered executor was unaffected, which masked this in-game where
+/// firebolt_explosion is only ever triggered.
+#[test]
+fn zero_start_window_opens_on_direct_cast() {
+    let tl = CastTimeline {
+        skill_id: "firebolt".into(),
+        phase_durations: PhaseDurations {
+            windup: 0.0,
+            active: 0.05,
+            recovery: 0.0,
+        },
+        collision_windows: vec![window(
+            "blast",
+            WindowPhase::Active,
+            VolumeMotion::Static,
+            0.05,
+        )],
+        acquisition: Default::default(),
+        vfx_cues: HashMap::new(),
+        chain_radius: 6.0,
+        chargeable: false,
+        max_hold: 1.0,
+        cues: HashMap::new(),
+    };
+    let (mut t, player, _dummy) = setup(11, tl);
+    t.app
+        .world_mut()
+        .commands()
+        .entity(player)
+        .cast_skill_dir("firebolt", Dir3::X);
+    t.advance_ticks(30);
+
+    let rec = t.rec();
+    assert!(!rec.cast_began.is_empty(), "cast begins");
+    assert!(
+        rec.hit_window_opened.iter().any(|w| w.window_id == "blast"),
+        "a start==0.0 scheduled window must open on the first tick of a direct cast; opened: {:?}",
+        rec.hit_window_opened
+    );
+}
