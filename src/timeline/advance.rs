@@ -800,10 +800,13 @@ pub fn end_hitboxes(
                         &cond.trigger_skill,
                         ExecPayload {
                             position,
-                            // No facing context at a world impact / fuse expiry — same
-                            // documented placeholder Task 7 uses for `HitConfirmed`-driven
-                            // triggers (see `on_hit_confirmed`'s `ExecPayload::direction` doc).
-                            direction: Vec3::X,
+                            // The facing context at a world impact / fuse expiry is the ending
+                            // hitbox's own heading (its launch aim) — what a triggered child
+                            // window inherits (and what `MotionDirection::Horizontal` flattens:
+                            // a ground-roller continues ALONG the parent's travel). The old
+                            // `Vec3::X` placeholder made every lifecycle-triggered projectile
+                            // march world-+X regardless of the parent's flight.
+                            direction: hb.aim,
                             target: None,
                             charge: hb.charge,
                             depth: hb.depth.saturating_add(1),
