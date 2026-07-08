@@ -124,6 +124,12 @@ pub struct CueBinding {
     /// Extra parameters fed to the effect/anim from cast-time data.
     #[serde(default)]
     pub params: Vec<CueParam>,
+    /// How long the bound effect PLAYS (emits), in seconds, before the host stops emission and
+    /// lets live particles drain out on their own authored lifetimes. `None` = the host's
+    /// default chain (the effect preset's own duration if it has one, else the host default).
+    /// Like `effect`, this is presentation-only — entirely inert to the sim.
+    #[serde(default)]
+    pub duration: Option<f32>,
 }
 
 /// Where a cue's effect attaches in the world.
@@ -965,6 +971,7 @@ mod tests {
                     param: "scale".into(),
                     source: ParamSource::Charge,
                 }],
+                duration: Some(2.5),
             },
         );
         cues.insert(
@@ -974,6 +981,7 @@ mod tests {
                 attach: CueAttach::Follow,
                 anim: None,
                 params: vec![],
+                duration: None,
             },
         );
         let tl = CastTimeline {
@@ -990,9 +998,13 @@ mod tests {
         assert_eq!(on_cast.params.len(), 1);
         assert_eq!(on_cast.params[0].param, "scale");
         assert_eq!(on_cast.params[0].source, ParamSource::Charge);
+        assert_eq!(on_cast.duration, Some(2.5));
         let on_hit = &back.cues["on_hit"];
         assert_eq!(on_hit.attach, CueAttach::Follow);
         assert!(on_hit.anim.is_none());
+        // `duration` omitted from the RON (None serializes as nothing under serde default)
+        // round-trips as None — every pre-duration binding parses unchanged.
+        assert_eq!(on_hit.duration, None);
     }
 
     /// `cues` omitted entirely (every pre-Task-13 timeline) defaults to empty.
