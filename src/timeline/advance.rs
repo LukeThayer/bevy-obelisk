@@ -499,6 +499,10 @@ pub(crate) fn spawn_window_hitbox(
     let motion_dir = match win.motion_direction {
         MotionDirection::Inherit => dir,
         MotionDirection::Down => Vec3::NEG_Y,
+        MotionDirection::Horizontal => {
+            let flat = Vec3::new(dir.x, 0.0, dir.z);
+            flat.try_normalize().unwrap_or(Vec3::Z)
+        }
     };
     let emitted = payload.emitted;
     let rot = Quat::from_rotation_arc(Vec3::Z, motion_dir);

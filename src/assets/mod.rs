@@ -349,6 +349,13 @@ pub enum MotionDirection {
     /// Launch straight down (`-Y`) at the motion's authored `speed`, regardless of aim — a
     /// shard falling out of the sky rather than following the caster's facing.
     Down,
+    /// Launch along the inherited direction FLATTENED to the ground plane (Y zeroed, then
+    /// normalized) — a ground-roller/wave that continues along the aim without diving into or
+    /// climbing away from the floor. A triggered execution's inherited direction is the ending
+    /// window's travel direction (e.g. a ballistic bolt's DESCENDING impact velocity); this
+    /// keeps the child hugging the ground instead of burying itself. A degenerate horizontal
+    /// component (straight-down aim) falls back to `+Z`.
+    Horizontal,
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq, Eq)]
