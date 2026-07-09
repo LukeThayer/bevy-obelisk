@@ -214,6 +214,7 @@ fn two_window_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
@@ -405,6 +406,7 @@ fn executor_retries_while_timeline_asset_is_still_loading() {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     };
     let _ = t
         .app
@@ -588,6 +590,7 @@ fn fireball_bolt_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
@@ -628,6 +631,7 @@ fn fireball_explosion_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 

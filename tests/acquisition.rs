@@ -71,6 +71,7 @@ fn blizzard_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
@@ -222,6 +223,7 @@ fn hitscan_fizzle_is_a_paid_rejection() {
             chargeable: false,
             max_hold: 1.0,
             cues: HashMap::new(),
+            charge_cues: Vec::new(),
         });
     t.app
         .world_mut()
@@ -305,6 +307,7 @@ fn cast_point_anchor_in_aim_skill_fails_validation() {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     };
     let err = obelisk_bevy::assets::validate_timeline(&tl).unwrap_err();
     assert!(

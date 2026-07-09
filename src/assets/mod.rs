@@ -77,6 +77,37 @@ pub struct CastTimeline {
     #[serde(default)]
     #[reflect(ignore)]
     pub cues: std::collections::HashMap<String, CueBinding>,
+    /// CHARGE-HOLD presentation tiers (chargeable skills): while the HOST's hold-to-charge input
+    /// is down, the tier whose `threshold` is the highest one at or below the LIVE charge
+    /// fraction is ACTIVE — its effect loops (emission stopped when the tier is left or the
+    /// hold releases; live particles drain on their own lifetimes), its `anim` loops on the
+    /// caster's rig, and its `params` stream the live charge every frame. Crossing into a higher
+    /// tier drains the old tier's effect and starts the new one — "the glow grows, then ignites".
+    ///
+    /// PURE PRESENTATION, entirely host-side: the sim never reads this, no `CueEvent` fires for
+    /// it (charging is visible to every peer through the host's own input replication, so hosts
+    /// drive these cues locally per player with no wire traffic). `cue.duration` is ignored
+    /// (tiers loop). Sorted ascending by `threshold`; `validate_timeline` enforces it. Empty for
+    /// every pre-charge-cues timeline (defaulted). `#[reflect(ignore)]`: same rationale as
+    /// `cues` above.
+    #[serde(default)]
+    #[reflect(ignore)]
+    pub charge_cues: Vec<ChargeCue>,
+}
+
+/// One charge-hold presentation tier — active while the live charge fraction is within
+/// [`threshold`, next tier's threshold). See [`CastTimeline::charge_cues`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChargeCue {
+    /// Charge fraction (0.0..=1.0 of a FULL hold) at which this tier becomes active. The first
+    /// tier is normatively 0.0 (a hold with no 0.0 tier shows nothing until the first
+    /// threshold — legal, occasionally intended).
+    pub threshold: f32,
+    /// The tier's binding: effect/attach/anim/params. `duration` is ignored (tiers loop until
+    /// left); `attach` is normatively `World` (at the caster) or `Bone` (a rig socket) — never
+    /// `Follow` (there is no window to follow during a hold).
+    pub cue: CueBinding,
 }
 
 fn default_chain_radius() -> f32 {
@@ -133,10 +164,10 @@ pub struct CueBinding {
 }
 
 /// Where a cue's effect attaches in the world.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum CueAttach {
     /// Plays at a fixed world position/orientation (does not track its source afterward).
-    /// Legal on every slot; the only legal option on world-anchored slots (`on_cast`, `on_hit`,
+    /// Legal on every slot; the only legal option on world-anchored slots (`on_hit`,
     /// `on_end_*` — see `CueBinding` docs).
     #[default]
     World,
@@ -144,6 +175,17 @@ pub enum CueAttach {
     /// data, and the window's end event (not the binding) terminates it — see `CueBinding` docs.
     /// Normatively authorable on `on_window_*`/`emit_*` slots only.
     Follow,
+    /// Anchors to a NAMED BONE (socket) of the CASTER's rig, offset in the bone's local frame —
+    /// charge sparks on the casting hand, a muzzle flash at the palm. The host resolves `socket`
+    /// against its rig's named joints and parents the effect there (an unknown socket falls back
+    /// to the rig root — never a panic; presentation is best-effort by contract). Normatively
+    /// authorable on caster-anchored presentation slots: `on_cast` and the charge tiers
+    /// (`CastTimeline::charge_cues`).
+    Bone {
+        socket: String,
+        #[serde(default)]
+        offset: Vec3,
+    },
 }
 
 /// One cue parameter binding: `param` (the effect/anim parameter name) driven by `source`.
@@ -432,6 +474,41 @@ pub enum CastLoadError {
 ///   `acquisition` can actually produce a cast point — otherwise the window would silently fall
 ///   back to the caster's position at spawn time, masking an authoring mistake.
 pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
+    // Charge tiers: thresholds within [0, 1], strictly ascending (equal thresholds would make
+    // "the active tier" ambiguous), Bone sockets non-empty. `Follow` is normatively illegal on
+    // tiers (nothing to follow during a hold) — flagged here rather than silently no-oping.
+    let mut prev_threshold: Option<f32> = None;
+    for (i, tier) in tl.charge_cues.iter().enumerate() {
+        if !(0.0..=1.0).contains(&tier.threshold) {
+            return Err(format!(
+                "charge tier {i} threshold {} must be within 0.0..=1.0",
+                tier.threshold
+            ));
+        }
+        if let Some(prev) = prev_threshold {
+            if tier.threshold <= prev {
+                return Err(format!(
+                    "charge tier {i} threshold {} must be strictly greater than the previous \
+                     tier's {prev} (tiers sort ascending)",
+                    tier.threshold
+                ));
+            }
+        }
+        prev_threshold = Some(tier.threshold);
+        match &tier.cue.attach {
+            CueAttach::Follow => {
+                return Err(format!(
+                    "charge tier {i} may not use Follow attach (there is no window to follow \
+                     during a hold) — use World or Bone"
+                ));
+            }
+            CueAttach::Bone { socket, .. } if socket.is_empty() => {
+                return Err(format!("charge tier {i} Bone attach needs a non-empty socket name"));
+            }
+            _ => {}
+        }
+    }
+
     let mut referenced: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for w in &tl.collision_windows {
         let Some(em) = &w.emitter else { continue };
@@ -581,6 +658,7 @@ mod tests {
             chargeable: false,
             max_hold: default_max_hold(),
             cues: Default::default(),
+            charge_cues: Vec::new(),
         }
     }
 
@@ -1084,5 +1162,56 @@ mod tests {
                 .is_some(),
             "CastTimeline must be registered"
         );
+    }
+
+    /// Charge tiers + Bone attach round-trip through RON, old content parses unchanged
+    /// (defaulted), and the validation rules hold: ascending thresholds in range, no Follow on
+    /// tiers, non-empty sockets.
+    #[test]
+    fn charge_cues_parse_and_validate() {
+        let ron_src = r#"(
+            skill_id: "t",
+            phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+            chargeable: true,
+            charge_cues: [
+                ( threshold: 0.0, cue: ( effect: Some("sparks"),
+                    attach: Bone( socket: "right_hand", offset: (0.0, 0.05, 0.0) ),
+                    anim: Some("casting_idle"),
+                    params: [ ( param: "scale", source: Charge ) ] ) ),
+                ( threshold: 0.6, cue: ( effect: Some("storm"),
+                    attach: Bone( socket: "right_hand" ) ) ),
+            ],
+        )"#;
+        let tl: CastTimeline = ron::from_str(ron_src).expect("charge_cues timeline parses");
+        assert_eq!(tl.charge_cues.len(), 2);
+        assert!(matches!(
+            &tl.charge_cues[0].cue.attach,
+            CueAttach::Bone { socket, offset } if socket == "right_hand" && offset.y == 0.05
+        ));
+        validate_timeline(&tl).expect("well-formed tiers validate");
+
+        // Old content: no charge_cues field -> empty, still valid.
+        let old: CastTimeline = ron::from_str(
+            r#"( skill_id: "o", phase_durations: ( windup: 0.0, active: 0.1, recovery: 0.0 ) )"#,
+        )
+        .expect("pre-charge content parses");
+        assert!(old.charge_cues.is_empty());
+
+        // Rule failures.
+        let mut bad = tl.clone();
+        bad.charge_cues[1].threshold = 0.0; // duplicate of tier 0
+        assert!(validate_timeline(&bad).is_err(), "non-ascending thresholds rejected");
+        let mut bad = tl.clone();
+        bad.charge_cues[0].cue.attach = CueAttach::Follow;
+        assert!(validate_timeline(&bad).is_err(), "Follow illegal on tiers");
+        let mut bad = tl.clone();
+        bad.charge_cues[0].cue.attach = CueAttach::Bone {
+            socket: String::new(),
+            offset: Vec3::ZERO,
+        };
+        assert!(validate_timeline(&bad).is_err(), "empty socket rejected");
+        let mut bad = tl;
+        bad.charge_cues[0].threshold = 1.5;
+        assert!(validate_timeline(&bad).is_err(), "threshold outside 0..=1 rejected");
     }
 }

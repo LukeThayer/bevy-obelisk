@@ -75,6 +75,7 @@ fn bolt_timeline(bolt_duration: f32) -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
@@ -345,6 +346,7 @@ fn non_striking_windows_never_hit() {
             chargeable: false,
             max_hold: 1.0,
             cues: HashMap::new(),
+            charge_cues: Vec::new(),
         };
         let (mut t, player, _dummy) = setup(23, tl);
         t.app
@@ -405,6 +407,7 @@ fn zero_start_window_opens_on_direct_cast() {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     };
     let (mut t, player, _dummy) = setup(11, tl);
     t.app

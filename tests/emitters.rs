@@ -98,6 +98,7 @@ fn blizzard_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
@@ -225,6 +226,7 @@ fn firebolt_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 

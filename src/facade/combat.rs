@@ -378,6 +378,7 @@ base_damages = [{{ type = "fire", min = 15.0, max = 15.0 }}]
             chargeable: false,
             max_hold: 1.0,
             cues: std::collections::HashMap::new(),
+            charge_cues: Vec::new(),
         }
     }
 

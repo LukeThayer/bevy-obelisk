@@ -68,6 +68,7 @@ fn chain_timeline(skill_id: &str) -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
@@ -346,6 +347,7 @@ fn chain_zap_explosion_timeline() -> CastTimeline {
         chargeable: false,
         max_hold: 1.0,
         cues: HashMap::new(),
+        charge_cues: Vec::new(),
     }
 }
 
