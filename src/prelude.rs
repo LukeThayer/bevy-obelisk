@@ -1,4 +1,6 @@
-pub use crate::assets::{CastTimeline, CastTimelineHandles};
+pub use crate::assets::{
+    CastTimeline, CastTimelineHandles, PaintMode, PaintSpec, SurfaceRequirement,
+};
 pub use crate::core::components::{Attributes, Combatant, Faction, SkillSlots};
 pub use crate::core::config::{CombatRng, ObeliskConfigExt, SkillRegistry, SkillSource};
 pub use crate::core::cooldown::Cooldowns;

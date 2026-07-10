@@ -658,3 +658,134 @@ fn same_tick_double_cast_consumes_the_patch_exactly_once() {
     assert_eq!(consumed, 1, "exactly one Consumed event");
     assert_eq!(patch_count(&mut t, "frost"), 0);
 }
+
+/// The surfaces golden: an identical script (trail paint + standing burn + oil ignite) run
+/// twice from the same seed must produce IDENTICAL event streams — positions, counts, damage.
+#[test]
+fn surfaces_pipeline_is_deterministic_across_runs() {
+    fn run(seed: u64) -> (Vec<(String, [i64; 3])>, Vec<i64>) {
+        let mut t = surf_app(seed);
+        let painter =
+            spawn_combatant(&mut t, "painter", Vec3::new(-5.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Player);
+        let victim =
+            spawn_combatant(&mut t, "victim", Vec3::new(3.0, 0.0, 0.5), obelisk_bevy::prelude::Faction::Enemy);
+        load_timeline(&mut t, "paint_roller", "tests/fixtures/cast/paint_roller.cast.ron");
+        load_timeline(&mut t, "burning_tick", "tests/fixtures/cast/burning_tick.cast.ron");
+        load_timeline(&mut t, "fire_probe", "tests/fixtures/cast/fire_probe.cast.ron");
+        load_timeline(&mut t, "test_ignite", "tests/fixtures/cast/test_ignite.cast.ron");
+        obelisk_bevy::spatial::boxes::insert_hurtbox(
+            &mut t.app.world_mut().commands(),
+            victim,
+            0.5,
+            Vec3::new(3.0, 0.0, 0.5),
+        );
+        t.app.world_mut().flush();
+        t.advance_ticks(3);
+        // Script: burning under the victim, oil on the fire_probe's path, roller across.
+        t.app.world_mut().trigger(PaintSurface {
+            surface: "burning".into(),
+            position: Vec3::new(3.0, 0.0, 0.5),
+            owner: painter,
+        });
+        t.app.world_mut().trigger(PaintSurface {
+            surface: "oil".into(),
+            position: Vec3::new(4.0, 0.0, 0.0),
+            owner: painter,
+        });
+        t.app.world_mut().flush();
+        grant_and_cast_dir(&mut t, painter, "paint_roller", Vec3::X);
+        t.advance_ticks(30);
+        grant_and_cast_dir(&mut t, painter, "fire_probe", Vec3::X);
+        t.advance_ticks(120);
+        // Quantize to bit-stable integers (f32 determinism on one machine is exact; the
+        // quantization just makes failures readable).
+        let paints = t
+            .rec()
+            .surfaces_painted
+            .iter()
+            .map(|p| {
+                (
+                    p.surface.clone(),
+                    [
+                        (p.position.x * 1000.0) as i64,
+                        (p.position.y * 1000.0) as i64,
+                        (p.position.z * 1000.0) as i64,
+                    ],
+                )
+            })
+            .collect();
+        let damage = t
+            .rec()
+            .damage_resolved
+            .iter()
+            .map(|d| (d.total_damage * 1000.0) as i64)
+            .collect();
+        (paints, damage)
+    }
+    let a = run(42);
+    let b = run(42);
+    assert_eq!(a.0, b.0, "paint stream identical across runs");
+    assert_eq!(a.1, b.1, "damage stream identical across runs");
+    assert!(!a.0.is_empty() && !a.1.is_empty(), "the script actually exercised the pipeline");
+}
+
+/// Companion to the determinism lock (reviewer-requested): OVERLAPPING same-type patches must
+/// NOT multiply standing damage. The rehit clock is keyed per (victim, surface-type), so a
+/// victim inside TWO burning patches still takes `burning_tick` exactly once per rehit_interval
+/// — the spec §5.2 "standing in 3 overlapping burning patches ticks ONCE" guarantee. If the
+/// overlap double-counted, cadence would ~double (≈10 in 1s instead of ≈5).
+#[test]
+fn overlapping_same_type_patches_tick_once_per_interval() {
+    let mut t = surf_app(13);
+    let painter = spawn_combatant(
+        &mut t,
+        "painter",
+        Vec3::new(-5.0, 0.0, 0.0),
+        obelisk_bevy::prelude::Faction::Player,
+    );
+    let victim = spawn_combatant(
+        &mut t,
+        "victim",
+        Vec3::new(3.0, 0.0, 0.5),
+        obelisk_bevy::prelude::Faction::Enemy,
+    );
+    load_timeline(&mut t, "burning_tick", "tests/fixtures/cast/burning_tick.cast.ron");
+    // Hurtbox so the tick skill's blast can actually land on the victim.
+    obelisk_bevy::spatial::boxes::insert_hurtbox(
+        &mut t.app.world_mut().commands(),
+        victim,
+        0.5,
+        Vec3::new(3.0, 0.0, 0.5),
+    );
+    t.app.world_mut().flush();
+    t.advance_ticks(3); // spatial pipeline sees the fresh static collider (probe note)
+    // Two burning patches, both covering the victim (patch_radius 0.45): one dead-center under
+    // the victim, one 0.4m away. 0.4 > merge_radius 0.25, so they do NOT dedup into one — flush
+    // between the paints so the second paint's dedup check actually sees the first committed
+    // patch and correctly declines to merge.
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "burning".into(),
+        position: Vec3::new(3.0, 0.0, 0.5),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "burning".into(),
+        position: Vec3::new(3.4, 0.0, 0.5),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    assert_eq!(
+        patch_count(&mut t, "burning"),
+        2,
+        "two distinct overlapping burning patches are live (0.4 > merge_radius 0.25)"
+    );
+    // rehit_interval 0.2s over ~1.0s -> ~5 ticks — the SAME cadence a single patch gives (see
+    // `standing_in_burning_ticks_...`), proving the per-(victim,type) clock dedups the overlap.
+    t.advance_ticks(60);
+    let ticks = damage_events_for(&t, "burning_tick");
+    assert!(
+        (4..=6).contains(&ticks),
+        "overlapping patches tick the victim once per interval, got {ticks}"
+    );
+}
