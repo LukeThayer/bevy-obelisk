@@ -1,5 +1,16 @@
 # The Anatomy of a Skill — Parts, Edges, Triggers — Concept Spec
 
+> **⚠️ SUPERSEDED (schema v1) — kept for design rationale only.** The authored-causality vocabulary in
+> this doc — `on_end` `Chain`/`Retarget` reactions, `WindowPhase::Chained`, `spawn_phase`/`spawn_offset`,
+> `targeting:`/`delivery:`, the separate `.skillfx.ron` presentation file — was DELETED in the
+> **schema-v2** rework (~2026-07-09). Under v2's `#[serde(deny_unknown_fields)]` that RON no longer parses;
+> the mechanisms survive but authoring moved to **rules triggers** (`[[conditions]] trigger_skill`) +
+> rules `can_chain`/`chain_count`, with acquisition/emitters/anchors/presentation now inline in the
+> `.cast.ron`. **Author from:** `src/assets/mod.rs` (the schema),
+> `2026-07-02-skill-editor-reimplementation-design.md` (APPROVED), and
+> `obelisk-arena/.claude/skills/arena-skill-design`. Corrected palette + editor gaps:
+> `obelisk-arena/docs/superpowers/reviews/2026-07-09-obelisk-skill-system-and-editor-review.md`.
+
 **Goal:** Define what a skill IS — its parts, the edges (events) that connect them, and the
 triggers that hook the rules — precisely enough that the editor can author any skill in the
 target design space and the sim can execute it deterministically. Reference examples that MUST
@@ -144,6 +155,11 @@ loop anchored to the zone, shard trails, shard impacts. *Needs: acquisition with
 point-anchored zone spawn, OnTick emitter edge, deterministic jitter from `CombatRng`.*
 
 ## 6. Gap map (existing → increment 1 → next)
+
+> **⚠️ This gap map is v1-era and now wrong.** Post schema-v2: emitters + point-anchored zones + RNG
+> jitter (marked ❌ below), authored acquisition with fallbacks (⚠️), and trigger↔graph unification (🔮)
+> all SHIPPED; and the `OnEnd` `Chain`/`Retarget` *authoring* (✅ below) was DELETED — chaining is
+> rules-side and beam-only. For the current palette + ceilings see the arena review §3.
 
 | Capability | Status |
 |---|---|

@@ -1,5 +1,15 @@
 # Event-Driven Skill Phases — Window End Events + Chaining — Design Spec
 
+> **⚠️ SUPERSEDED (schema v1) — kept for design rationale only.** The authored-causality vocabulary in
+> this doc — `on_end` `Chain`/`Retarget` reactions, `WindowPhase::Chained`, `spawn_phase`/`spawn_offset`,
+> `targeting:`/`delivery:`, the separate `.skillfx.ron` presentation file — was DELETED in the
+> **schema-v2** rework (~2026-07-09). Under v2's `#[serde(deny_unknown_fields)]` that RON no longer parses;
+> the end EVENTS survive but chaining is now **rules-side** (`[[conditions]] trigger_skill` with
+> `always`/`on_impact`/`on_expire`), and presentation is inline `cues` in the `.cast.ron`. **Author from:**
+> `src/assets/mod.rs` (the schema), `2026-07-02-skill-editor-reimplementation-design.md` (APPROVED), and
+> `obelisk-arena/.claude/skills/arena-skill-design`. Corrected palette + editor gaps:
+> `obelisk-arena/docs/superpowers/reviews/2026-07-09-obelisk-skill-system-and-editor-review.md`.
+
 **Status: SHIPPED 2026-07-02** (obelisk-bevy 6afa6ba + arena firebolt v2). Kept as the design rationale.
 
 **Goal:** Skills are physics-driven event sequences, not static animations. A moving hit volume

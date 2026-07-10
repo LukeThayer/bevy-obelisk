@@ -1,5 +1,15 @@
 # Beams, Retarget Hops, Hitscan Acquisition — Increment 2 — Design Record
 
+> **⚠️ SUPERSEDED (schema v1) — kept for design rationale only.** The authoring surface in this doc —
+> `EndReaction::Retarget { window, radius, max_hops }`, `WindowPhase::Chained`, `targeting: SingleEntity`
+> — was DELETED in the **schema-v2** rework (~2026-07-09). Under v2's `#[serde(deny_unknown_fields)]` that
+> RON no longer parses. The *behavior* survives, but the live authoring is rules `can_chain`/`chain_count`
+> + timeline `chain_radius` + a `Beam` window + `acquisition: HitscanEntity{range,filter,fallback}` (see
+> `chain_lightning`). **Author from:** `src/assets/mod.rs` (the schema),
+> `2026-07-02-skill-editor-reimplementation-design.md` (APPROVED), and
+> `obelisk-arena/.claude/skills/arena-skill-design`. Corrected palette + editor gaps:
+> `obelisk-arena/docs/superpowers/reviews/2026-07-09-obelisk-skill-system-and-editor-review.md`.
+
 **Status: SHIPPED 2026-07-02** (built directly per user decision; this doc records the design
 as implemented). Proving case: `chain_lightning` — charged release, server hitscan of the
 looked-at target, lightning arcs caster→T₀, then hops to the nearest un-struck enemy N times.
