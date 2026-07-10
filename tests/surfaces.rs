@@ -521,3 +521,94 @@ fn non_matching_tags_do_not_ignite_oil() {
     );
     assert_eq!(patch_count(&mut t, "oil"), 1, "oil untouched");
 }
+
+use obelisk_bevy::prelude::CastSkillExt;
+
+#[test]
+fn on_surface_gates_snaps_and_consumes_on_accept() {
+    let mut t = surf_app(9);
+    let caster = spawn_combatant(&mut t, "spirer", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    load_timeline(&mut t, "spire_probe", "tests/fixtures/cast/spire_probe.cast.ron");
+    // Patch at (4, 0, 0); aim 0.5m off-center (within radius 0.45 + slack 0.3).
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "frost".into(),
+        position: Vec3::new(4.0, 0.0, 0.0),
+        owner: caster,
+    });
+    t.app.world_mut().flush();
+    {
+        use obelisk_bevy::verbs::ObeliskCommandsExt;
+        t.app.world_mut().commands().entity(caster).grant_skill("spire_probe");
+        t.app
+            .world_mut()
+            .commands()
+            .entity(caster)
+            .cast_skill_at_point("spire_probe", Vec3::new(4.5, 0.0, 0.0));
+    }
+    t.app.world_mut().flush();
+    t.advance_ticks(20);
+    assert_eq!(t.rec().cast_began.len(), 1, "gated cast accepted on a frost patch");
+    // Consume-on-accept: the patch is gone.
+    assert_eq!(patch_count(&mut t, "frost"), 0, "patch consumed at cast-accept");
+    assert!(t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .any(|r| r.surface == "frost" && r.reason == SurfaceRemoveReason::Consumed));
+    // Snap: the CastPoint-anchored window spawned at the PATCH CENTER (4,0,0), not (4.5,..).
+    let w = t
+        .rec()
+        .hit_window_opened
+        .iter()
+        .find(|w| w.skill_id == "spire_probe")
+        .expect("window opened");
+    let hb_pos = t.rec().hitbox_ended.iter().find(|e| e.skill_id == "spire_probe").unwrap().position;
+    let _ = w;
+    assert!(
+        (hb_pos - Vec3::new(4.0, 0.0, 0.0)).length() < 0.01,
+        "snapped to patch center, got {hb_pos:?}"
+    );
+}
+
+#[test]
+fn on_surface_miss_fizzles_or_falls_back() {
+    let mut t = surf_app(10);
+    let caster = spawn_combatant(&mut t, "spirer", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    load_timeline(&mut t, "spire_probe", "tests/fixtures/cast/spire_probe.cast.ron");
+    load_timeline(&mut t, "spire_fallback", "tests/fixtures/cast/spire_fallback.cast.ron");
+    {
+        use obelisk_bevy::verbs::ObeliskCommandsExt;
+        t.app.world_mut().commands().entity(caster).grant_skill("spire_probe");
+        t.app.world_mut().commands().entity(caster).grant_skill("spire_fallback");
+        // No frost anywhere: Fizzle variant rejects...
+        t.app
+            .world_mut()
+            .commands()
+            .entity(caster)
+            .cast_skill_at_point("spire_probe", Vec3::new(4.0, 0.0, 0.0));
+    }
+    t.app.world_mut().flush();
+    t.advance_ticks(10);
+    assert_eq!(t.rec().cast_began.len(), 0);
+    assert_eq!(t.rec().cast_rejected.len(), 1, "no frost -> paid fizzle (CastRejected)");
+    // ...while the Then(SelfPoint) variant falls back and casts at the caster.
+    t.app
+        .world_mut()
+        .commands()
+        .entity(caster)
+        .cast_skill_at_point("spire_fallback", Vec3::new(4.0, 0.0, 0.0));
+    t.app.world_mut().flush();
+    t.advance_ticks(20);
+    assert_eq!(t.rec().cast_began.len(), 1, "fallback chain rescued the cast");
+    let hb_pos = t
+        .rec()
+        .hitbox_ended
+        .iter()
+        .find(|e| e.skill_id == "spire_fallback")
+        .unwrap()
+        .position;
+    assert!(
+        (hb_pos - Vec3::ZERO).length() < 0.01,
+        "SelfPoint fallback anchors at the caster, got {hb_pos:?}"
+    );
+}

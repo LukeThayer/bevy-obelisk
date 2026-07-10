@@ -1,0 +1,10 @@
+( skill_id: "spire_probe",
+  phase_durations: ( windup: 0.0, active: 0.05, recovery: 0.0 ),
+  collision_windows: [
+    ( id: "spike", spawn: Scheduled( phase: Active, offset: 0.0 ), anchor: CastPoint,
+      active_duration: 0.1, shape: Sphere( radius: 0.5 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+  acquisition: GroundPoint( range: 60.0, fallback: Fizzle,
+    on_surface: Some(( surface: "frost", snap: true, consume: true )) ),
+)

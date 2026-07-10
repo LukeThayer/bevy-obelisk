@@ -1,8 +1,10 @@
 use crate::assets::{
     AcqFallback, Acquisition, CastTimeline, CastTimelineHandles, CollisionWindow, MotionDirection,
-    PhaseDurations, VolumeMotion, WindowAnchor, WindowPhase, WindowSpawn,
+    PhaseDurations, SurfaceRequirement, VolumeMotion, WindowAnchor, WindowPhase, WindowSpawn,
 };
 use crate::combat::system::is_invalid_lifecycle_target;
+use crate::surfaces::patch::{xz_dist, SurfacePatch, SurfaceRemoveReason, SurfaceRemoved};
+use crate::surfaces::types::{SURFACE_MATCH_SLACK, SURFACE_Y_TOLERANCE};
 use crate::core::components::{Attributes, Faction};
 use crate::core::config::SkillRegistry;
 use crate::core::cooldown::Cooldowns;
@@ -42,8 +44,17 @@ pub fn validate_casts(
     factions: Query<&Faction>,
     spatial: SpatialQuery,
     hurtboxes: Query<(Entity, &Hurtbox)>,
+    surface_patches: Query<(Entity, &SurfacePatch, &Transform)>,
     mut cooldowns: ResMut<Cooldowns>,
 ) {
+    // Pre-collect the live patches once, seq-sorted, so acquisition's nearest-match sees a
+    // deterministic candidate order (spec §5.1 — surfaces gate/snap/consume for point casts).
+    let mut patch_view: Vec<PatchView> = surface_patches
+        .iter()
+        .map(|(e, p, tf)| (e, tf.translation, p.surface.clone(), p.radius, p.seq))
+        .collect();
+    patch_view.sort_by_key(|(_, _, _, _, seq)| *seq);
+
     for (caster, req) in &pending {
         commands.entity(caster).remove::<PendingCast>();
 
@@ -167,15 +178,16 @@ pub fn validate_casts(
         // `Acquisition` (walking `AcqFallback` chains)? Rejects (paid — no `ActiveCast`, no
         // cooldown started, same as every other early reject above) if the chain bottoms out at
         // `Fizzle`; otherwise yields this cast's CAST POINT, if the winning branch produces one.
-        let cast_point = match resolve_acquisition(
+        let (cast_point, consume_patch) = match resolve_acquisition(
             &timeline.acquisition,
             req.aim,
             caster_pos,
             &transforms,
             &factions,
             caster,
+            &patch_view,
         ) {
-            Ok(cast_point) => cast_point,
+            Ok(pair) => pair,
             Err(reason) => {
                 commands.trigger(CastRejected {
                     caster,
@@ -215,6 +227,20 @@ pub fn validate_casts(
             total_duration: windup + active + recovery,
             charge: req.charge,
         });
+        // Consume the matched surface patch at CAST-ACCEPT (spec §5.1/D7: the tile is spent even
+        // if the cast is later interrupted). `consume_patch` is `Some` only for a `GroundPoint`
+        // whose `on_surface` authored `consume: true` and found a match this tick.
+        if let Some(patch) = consume_patch {
+            if let Ok((pe, p, ptf)) = surface_patches.get(patch) {
+                commands.trigger(SurfaceRemoved {
+                    patch: pe,
+                    surface: p.surface.clone(),
+                    position: ptf.translation,
+                    reason: SurfaceRemoveReason::Consumed,
+                });
+            }
+            commands.entity(patch).despawn();
+        }
         let cd = skill.effective_cooldown(attrs.0.cooldown_reduction) as f32;
         if cd > 0.0 {
             cooldowns.start(caster, &req.skill_id, cd);
@@ -226,6 +252,10 @@ pub fn validate_casts(
         }
     }
 }
+
+/// Pre-collected, seq-sorted view of the live patches for acquisition checks (deterministic
+/// candidate order): (patch entity, position, surface id, radius, seq).
+type PatchView = (Entity, Vec3, String, f32, u64);
 
 /// Check a HOST-resolved `CastAim` against an authored `Acquisition` (Task 10, spec §3.2),
 /// walking `AcqFallback::Then` chains against the SAME `aim` until a branch is met or the chain
@@ -240,6 +270,7 @@ pub fn validate_casts(
 /// needs"); a branch that fails because a genuine distance check came up short (`HitscanEntity`
 /// or `GroundPoint` beyond `range`) maps to `OutOfRange`. Both variants already exist and read
 /// honestly for every failure mode this schema can produce, so no new variant was added.
+#[allow(clippy::too_many_arguments)]
 fn resolve_acquisition(
     acq: &Acquisition,
     aim: CastAim,
@@ -247,10 +278,11 @@ fn resolve_acquisition(
     transforms: &Query<&Transform>,
     factions: &Query<&Faction>,
     caster: Entity,
-) -> Result<Option<Vec3>, CastRejectReason> {
+    patches: &[PatchView],
+) -> Result<(Option<Vec3>, Option<Entity>), CastRejectReason> {
     match acq {
-        Acquisition::Aim => Ok(None),
-        Acquisition::SelfPoint => Ok(Some(caster_pos)),
+        Acquisition::Aim => Ok((None, None)),
+        Acquisition::SelfPoint => Ok((Some(caster_pos), None)),
         Acquisition::HitscanEntity {
             range,
             filter,
@@ -258,19 +290,21 @@ fn resolve_acquisition(
         } => match check_hitscan_entity(
             aim, *range, *filter, caster_pos, transforms, factions, caster,
         ) {
-            Ok(()) => Ok(None),
+            Ok(()) => Ok((None, None)),
             Err(reason) => resolve_fallback(
-                fallback, aim, caster_pos, transforms, factions, caster, reason,
+                fallback, aim, caster_pos, transforms, factions, caster, patches, reason,
             ),
         },
-        Acquisition::GroundPoint { range, fallback } => {
-            match check_ground_point(aim, *range, caster_pos) {
-                Ok(point) => Ok(Some(point)),
-                Err(reason) => resolve_fallback(
-                    fallback, aim, caster_pos, transforms, factions, caster, reason,
-                ),
-            }
-        }
+        Acquisition::GroundPoint {
+            range,
+            fallback,
+            on_surface,
+        } => match check_ground_point(aim, *range, caster_pos, on_surface.as_ref(), patches) {
+            Ok(ok) => Ok(ok),
+            Err(reason) => resolve_fallback(
+                fallback, aim, caster_pos, transforms, factions, caster, patches, reason,
+            ),
+        },
     }
 }
 
@@ -284,12 +318,13 @@ fn resolve_fallback(
     transforms: &Query<&Transform>,
     factions: &Query<&Faction>,
     caster: Entity,
+    patches: &[PatchView],
     reason: CastRejectReason,
-) -> Result<Option<Vec3>, CastRejectReason> {
+) -> Result<(Option<Vec3>, Option<Entity>), CastRejectReason> {
     match fallback {
         AcqFallback::Fizzle => Err(reason),
         AcqFallback::Then(next) => {
-            resolve_acquisition(next, aim, caster_pos, transforms, factions, caster)
+            resolve_acquisition(next, aim, caster_pos, transforms, factions, caster, patches)
         }
     }
 }
@@ -324,19 +359,39 @@ fn check_hitscan_entity(
     Ok(())
 }
 
-/// `GroundPoint`'s own requirement: `aim` must be `CastAim::Point`, within `range` of the caster.
+/// `GroundPoint`'s own requirement: `aim` must be `CastAim::Point`, within `range` of the
+/// caster — and, when `on_surface` is authored, ON a matching patch (nearest by XZ distance,
+/// ties broken by patch seq — deterministic). Returns (cast point, patch-to-consume).
 fn check_ground_point(
     aim: CastAim,
     range: f32,
     caster_pos: Vec3,
-) -> Result<Vec3, CastRejectReason> {
+    on_surface: Option<&SurfaceRequirement>,
+    patches: &[PatchView],
+) -> Result<(Option<Vec3>, Option<Entity>), CastRejectReason> {
     let CastAim::Point(p) = aim else {
         return Err(CastRejectReason::NoTarget); // wrong aim kind
     };
     if p.distance(caster_pos) > range {
         return Err(CastRejectReason::OutOfRange);
     }
-    Ok(p)
+    let Some(req) = on_surface else {
+        return Ok((Some(p), None));
+    };
+    let best = patches
+        .iter()
+        .filter(|(_, pos, surface, radius, _)| {
+            surface == &req.surface
+                && xz_dist(*pos, p) <= *radius + SURFACE_MATCH_SLACK
+                && (p.y - pos.y).abs() <= SURFACE_Y_TOLERANCE
+        })
+        .min_by(|a, b| xz_dist(a.1, p).total_cmp(&xz_dist(b.1, p)).then(a.4.cmp(&b.4)));
+    let Some(best) = best else {
+        // No matching surface under the aim: this branch fails; the fallback chain decides.
+        return Err(CastRejectReason::NoTarget);
+    };
+    let point = if req.snap { best.1 } else { p };
+    Ok((Some(point), req.consume.then_some(best.0)))
 }
 
 pub fn advance_casts(

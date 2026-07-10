@@ -61,7 +61,7 @@ pub struct PaintSurface {
     pub owner: Entity,
 }
 
-pub(crate) fn xz_dist(a: Vec3, b: Vec3) -> f32 {
+pub fn xz_dist(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }
 

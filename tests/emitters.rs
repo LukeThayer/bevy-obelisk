@@ -94,6 +94,7 @@ fn blizzard_timeline() -> CastTimeline {
         acquisition: Acquisition::GroundPoint {
             range: 2000.0,
             fallback: AcqFallback::Then(Box::new(Acquisition::SelfPoint)),
+            on_surface: None,
         },
         vfx_cues: HashMap::from([("emit_shard".to_string(), "blizzard_emit_shard".to_string())]),
         chain_radius: 6.0,

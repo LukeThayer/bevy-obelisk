@@ -231,7 +231,13 @@ pub enum Acquisition {
     /// Requires the resolved aim to be `CastAim::Point`, within `range` of the caster. On
     /// success the cast point IS that point (preserved — the historic "blizzard blocker": a
     /// ground-targeted point is no longer collapsed to a direction). On failure runs `fallback`.
-    GroundPoint { range: f32, fallback: AcqFallback },
+    GroundPoint {
+        range: f32,
+        fallback: AcqFallback,
+        /// Optional surface gate (spec §5.1) — see [`SurfaceRequirement`].
+        #[serde(default)]
+        on_surface: Option<SurfaceRequirement>,
+    },
 }
 
 /// What to do when an `Acquisition` branch's requirement isn't met by the resolved aim.
@@ -244,6 +250,21 @@ pub enum AcqFallback {
     /// `GroundPoint` -> `SelfPoint` so a ground-point skill still resolves to "above the
     /// caster" when no point was aimed).
     Then(Box<Acquisition>),
+}
+
+/// Surface gate on a point acquisition (spec §5.1): the aimed point must land ON a patch of
+/// `surface` (XZ within `patch.radius + SURFACE_MATCH_SLACK`, Y within tolerance). `snap`
+/// recenters the cast point on the matched patch; `consume` removes the patch at CAST-ACCEPT
+/// (with mana — spec D7: an interrupted cast still spends the tile). Failure runs the normal
+/// fallback chain (paid fizzle at `Fizzle`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceRequirement {
+    pub surface: String,
+    #[serde(default = "default_true")]
+    pub snap: bool,
+    #[serde(default)]
+    pub consume: bool,
 }
 
 #[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
@@ -948,6 +969,7 @@ mod tests {
             acquisition: Acquisition::GroundPoint {
                 range: 30.0,
                 fallback: AcqFallback::Fizzle,
+                on_surface: None,
             },
             ..timeline_with(cast_point_window("storm"))
         };
@@ -1347,5 +1369,35 @@ mod tests {
             validate_timeline(&timeline_with(win)).is_err(),
             "lifetime override must be > 0"
         );
+    }
+
+    /// (Surfaces) `on_surface` on GroundPoint round-trips and defaults.
+    #[test]
+    fn on_surface_round_trips() {
+        let src = r#"(
+            skill_id: "gated",
+            phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+            acquisition: GroundPoint( range: 60.0, fallback: Fizzle,
+                on_surface: Some(( surface: "frost", consume: true )) ),
+        )"#;
+        let tl: CastTimeline = ron::from_str(src).expect("on_surface parses");
+        let Acquisition::GroundPoint { on_surface, .. } = &tl.acquisition else {
+            panic!("GroundPoint expected");
+        };
+        let req = on_surface.as_ref().expect("requirement present");
+        assert_eq!(req.surface, "frost");
+        assert!(req.snap, "snap defaults to true");
+        assert!(req.consume);
+        // Old content (no on_surface) still parses.
+        let old = r#"(
+            skill_id: "plain",
+            phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+            acquisition: GroundPoint( range: 30.0, fallback: Fizzle ),
+        )"#;
+        let tl: CastTimeline = ron::from_str(old).expect("pre-surfaces GroundPoint parses");
+        let Acquisition::GroundPoint { on_surface, .. } = &tl.acquisition else {
+            panic!()
+        };
+        assert!(on_surface.is_none());
     }
 }

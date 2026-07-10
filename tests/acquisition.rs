@@ -66,6 +66,7 @@ fn blizzard_timeline() -> CastTimeline {
         acquisition: Acquisition::GroundPoint {
             range: 10.0,
             fallback: AcqFallback::Then(Box::new(Acquisition::SelfPoint)),
+            on_surface: None,
         },
         vfx_cues: HashMap::new(),
         chain_radius: 6.0,
