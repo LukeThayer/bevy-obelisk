@@ -202,3 +202,88 @@ fn unknown_surface_paint_is_a_warn_not_a_panic() {
     t.app.update(); // must not panic
     assert_eq!(t.rec().surfaces_painted.len(), 0);
 }
+
+use obelisk_bevy::prelude::CastTimeline;
+
+/// Load a `.cast.ron` fixture and register its handle (the run_scenario pattern).
+fn load_timeline(t: &mut ObeliskTestApp, skill_id: &str, path: &str) {
+    let h: bevy::asset::Handle<CastTimeline> = t
+        .app
+        .world()
+        .resource::<bevy::asset::AssetServer>()
+        .load(path.to_string());
+    let mut loaded = false;
+    for _ in 0..2000 {
+        t.app.update();
+        if t.app
+            .world()
+            .resource::<bevy::asset::Assets<CastTimeline>>()
+            .get(&h)
+            .is_some()
+        {
+            loaded = true;
+            break;
+        }
+    }
+    assert!(loaded, "timeline asset {path} loaded");
+    t.app
+        .world_mut()
+        .resource_mut::<obelisk_bevy::prelude::CastTimelineHandles>()
+        .0
+        .insert(skill_id.to_string(), h);
+}
+
+fn grant_and_cast_dir(t: &mut ObeliskTestApp, caster: Entity, skill: &str, dir: Vec3) {
+    use obelisk_bevy::timeline::cast::CastSkillExt;
+    use obelisk_bevy::verbs::ObeliskCommandsExt;
+    t.app
+        .world_mut()
+        .commands()
+        .entity(caster)
+        .grant_skill(skill)
+        .cast_skill_dir(skill, bevy::math::Dir3::new(dir).unwrap());
+    t.app.world_mut().flush();
+}
+
+#[test]
+fn trail_window_paints_spaced_patches_along_its_flight() {
+    let mut t = surf_app(2);
+    let caster = spawn_combatant(&mut t, "roller", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    load_timeline(&mut t, "paint_roller", "tests/fixtures/cast/paint_roller.cast.ron");
+    grant_and_cast_dir(&mut t, caster, "paint_roller", Vec3::X);
+    // active_duration 1.0s at 8 m/s = ~8 m of travel; step 0.5 -> ~16 patches; merge_radius
+    // 0.25 < step so dedup never blocks the trail. Run 90 ticks (cast + full flight + end).
+    t.advance_ticks(90);
+    let painted = t.rec().surfaces_painted.len();
+    assert!(
+        (12..=20).contains(&painted),
+        "trail paints ~16 spaced patches, got {painted}"
+    );
+    // Spacing: consecutive paint positions are >= 0.5 - epsilon apart in X.
+    let xs: Vec<f32> = t.rec().surfaces_painted.iter().map(|p| p.position.x).collect();
+    for w in xs.windows(2) {
+        assert!(w[1] - w[0] >= 0.45, "trail spacing ~step: {:?}", xs);
+    }
+}
+
+#[test]
+fn on_end_window_paints_once_at_the_end_position_with_lifetime_override() {
+    let mut t = surf_app(3);
+    let caster = spawn_combatant(&mut t, "blaster", Vec3::new(5.0, 0.0, 5.0), obelisk_bevy::prelude::Faction::Player);
+    load_timeline(&mut t, "paint_blast", "tests/fixtures/cast/paint_blast.cast.ron");
+    grant_and_cast_dir(&mut t, caster, "paint_blast", Vec3::X);
+    t.advance_ticks(30); // windup 0 + active window fuse 0.2s -> ends, paints once
+    assert_eq!(t.rec().surfaces_painted.len(), 1, "OnEnd paints exactly once");
+    let p = &t.rec().surfaces_painted[0];
+    assert_eq!(p.surface, "burning");
+    assert!(
+        (p.position - Vec3::new(5.0, 0.0, 5.0)).length() < 0.01,
+        "static window ends at its spawn position, got {:?}",
+        p.position
+    );
+    // lifetime override 3.0 (not burning's 8.0): patch persists at 2.5s, gone by 3.5s.
+    t.advance_ticks(120); // ~2.0s more (total ~2.5s since paint)
+    assert_eq!(patch_count(&mut t, "burning"), 1);
+    t.advance_ticks(90); // ~1.5s more (total ~4.0s)
+    assert_eq!(patch_count(&mut t, "burning"), 0, "override lifetime expired");
+}

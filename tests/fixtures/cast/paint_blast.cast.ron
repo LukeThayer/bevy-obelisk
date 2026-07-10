@@ -1,0 +1,9 @@
+( skill_id: "paint_blast",
+  phase_durations: ( windup: 0.0, active: 0.05, recovery: 0.0 ),
+  collision_windows: [
+    ( id: "blast", spawn: Scheduled( phase: Active, offset: 0.0 ), active_duration: 0.2,
+      shape: Sphere( radius: 1.0 ), motion: Static,
+      hit_filter: Enemies, hit_mode: OncePerTarget,
+      paints: Some(( surface: "burning", radius: 1.0, mode: OnEnd, lifetime: Some(3.0) )) ),
+  ],
+)

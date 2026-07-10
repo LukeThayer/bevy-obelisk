@@ -5,6 +5,7 @@
 use bevy::prelude::*;
 
 use crate::core::components::Faction;
+use crate::spatial::boxes::Hitbox;
 use crate::surfaces::types::{SurfaceRegistry, SURFACE_Y_TOLERANCE};
 
 #[derive(Component, Debug, Clone)]
@@ -79,7 +80,7 @@ pub(crate) fn try_paint(
     commands: &mut Commands,
     registry: &SurfaceRegistry,
     seq: &mut SurfaceSeq,
-    existing: &Query<(Entity, &SurfacePatch, &Transform)>,
+    existing: &Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
     painted_this_tick: &mut Vec<(String, Vec3)>,
     surface_id: &str,
     position: Vec3,
@@ -151,7 +152,7 @@ pub fn on_paint_surface(
     ev: On<PaintSurface>,
     registry: Res<SurfaceRegistry>,
     mut seq: ResMut<SurfaceSeq>,
-    existing: Query<(Entity, &SurfacePatch, &Transform)>,
+    existing: Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
     factions: Query<&Faction>,
     mut commands: Commands,
 ) {

@@ -13,12 +13,14 @@
 use bevy::prelude::*;
 
 pub mod patch;
+pub mod systems;
 pub mod types;
 
 pub use patch::{
     decay_surfaces, on_paint_surface, patch_contains, PaintSurface, SurfacePainted, SurfacePatch,
     SurfaceRemoveReason, SurfaceRemoved, SurfaceSeq,
 };
+pub use systems::{on_hitbox_ended_paint, paint_surfaces, TrailPainted};
 pub use types::{
     load_surfaces_dir, ContactReaction, StandingFilter, StandingPayload, SurfaceRegistry,
     SurfaceType, SurfaceVisuals, SURFACE_MATCH_SLACK, SURFACE_Y_TOLERANCE,
@@ -33,6 +35,13 @@ impl Plugin for ObeliskSurfacesPlugin {
             bevy::app::FixedUpdate,
             decay_surfaces.in_set(crate::ObeliskSet::Advance),
         );
+        app.add_systems(
+            bevy::app::FixedUpdate,
+            paint_surfaces
+                .in_set(crate::ObeliskSet::ResolveHits)
+                .before(crate::spatial::detect::detect_overlaps),
+        );
         app.add_observer(on_paint_surface);
+        app.add_observer(on_hitbox_ended_paint);
     }
 }
