@@ -43,6 +43,7 @@ fn shard_window() -> CollisionWindow {
         hit_mode: HitMode::OncePerTarget,
         rehit_interval: None,
         emitter: None,
+        paints: None,
     }
 }
 
@@ -71,6 +72,7 @@ fn storm_window() -> CollisionWindow {
             jitter: 2.0,
             window: "shard".into(),
         }),
+        paints: None,
     }
 }
 
@@ -219,6 +221,7 @@ fn firebolt_timeline() -> CastTimeline {
             hit_mode: HitMode::FirstOnly,
             rehit_interval: None,
             emitter: None,
+            paints: None,
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),

@@ -44,6 +44,7 @@ fn beam_window(id: &str, phase: WindowPhase) -> CollisionWindow {
         hit_mode: HitMode::FirstOnly,
         rehit_interval: None,
         emitter: None,
+        paints: None,
     }
 }
 
@@ -340,6 +341,7 @@ fn chain_zap_explosion_timeline() -> CastTimeline {
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
             emitter: None,
+            paints: None,
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),

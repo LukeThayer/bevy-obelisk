@@ -46,6 +46,7 @@ fn window(id: &str, phase: WindowPhase, motion: VolumeMotion, duration: f32) -> 
         hit_mode: HitMode::FirstOnly,
         rehit_interval: None,
         emitter: None,
+        paints: None,
     }
 }
 

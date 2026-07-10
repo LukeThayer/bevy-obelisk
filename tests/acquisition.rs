@@ -47,6 +47,7 @@ fn storm_window() -> CollisionWindow {
         hit_mode: HitMode::OncePerTarget,
         rehit_interval: None,
         emitter: None,
+        paints: None,
     }
 }
 
@@ -212,6 +213,7 @@ fn hitscan_fizzle_is_a_paid_rejection() {
                 hit_mode: HitMode::FirstOnly,
                 rehit_interval: None,
                 emitter: None,
+                paints: None,
             }],
             acquisition: Acquisition::HitscanEntity {
                 range: 20.0,

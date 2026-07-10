@@ -288,6 +288,10 @@ pub struct CollisionWindow {
     /// no emission; every pre-Task-11 window omits this and is unaffected.
     #[serde(default)]
     pub emitter: Option<Emitter>,
+    /// Paint surface patches while alive / on end (spec §5.1) — see [`PaintSpec`]. `None` (the
+    /// default) = no painting; every pre-surfaces window omits this and is unaffected.
+    #[serde(default)]
+    pub paints: Option<PaintSpec>,
 }
 
 fn default_true() -> bool {
@@ -376,6 +380,34 @@ pub struct Emitter {
     pub jitter: f32,
     /// Id of the `Template` window to instantiate.
     pub window: String,
+}
+
+/// Authored surface painting for a window (spec §5.1): while this window's hitbox is alive
+/// (`Trail`) or when it ends (`OnEnd`), paint patches of `surface`. Painting is a window
+/// PROPERTY (not a child window), so it composes with emitters without inheriting the parent
+/// skill's lifecycle triggers — the exact trap that forced the arena's tile-drop poller.
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaintSpec {
+    /// Surface-type id (resolved against the host's `SurfaceRegistry` at runtime; unknown ids
+    /// warn-and-skip — editor validation is the blocking check, same split as cue effects).
+    pub surface: String,
+    /// Painted patch radius (world units).
+    pub radius: f32,
+    pub mode: PaintMode,
+    /// Per-paint lifetime override (secs); `None` = the surface type's default.
+    #[serde(default)]
+    pub lifetime: Option<f32>,
+}
+
+/// When a painting window actually paints.
+#[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize, PartialEq)]
+pub enum PaintMode {
+    /// Paint every `step` meters of hitbox travel (the glacier-trail shape). Also paints once
+    /// immediately at spawn.
+    Trail { step: f32 },
+    /// Paint once at the hitbox's end position, whatever the end reason (shards, blasts).
+    OnEnd,
 }
 
 /// Overrides a window's `VolumeMotion` launch direction (Task 11, spec §3.2) — authored ON the
@@ -568,6 +600,33 @@ pub fn validate_timeline(tl: &CastTimeline) -> Result<(), String> {
                 w.id, tl.acquisition
             ));
         }
+        if let Some(paints) = &w.paints {
+            if paints.surface.is_empty() {
+                return Err(format!("window '{}' paints an empty surface id", w.id));
+            }
+            if paints.radius <= 0.0 {
+                return Err(format!(
+                    "window '{}' paints radius must be > 0, got {}",
+                    w.id, paints.radius
+                ));
+            }
+            if let PaintMode::Trail { step } = paints.mode {
+                if step <= 0.0 {
+                    return Err(format!(
+                        "window '{}' paints Trail step must be > 0, got {step}",
+                        w.id
+                    ));
+                }
+            }
+            if let Some(lt) = paints.lifetime {
+                if lt <= 0.0 {
+                    return Err(format!(
+                        "window '{}' paints lifetime override must be > 0, got {lt}",
+                        w.id
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -613,6 +672,8 @@ impl Plugin for ObeliskAssetsPlugin {
             .register_type::<VolumeMotion>()
             .register_type::<MotionDirection>()
             .register_type::<Emitter>()
+            .register_type::<PaintSpec>()
+            .register_type::<PaintMode>()
             .register_type::<HitFilter>()
             .register_type::<HitMode>();
     }
@@ -640,6 +701,7 @@ mod tests {
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
             emitter: None,
+            paints: None,
         }
     }
 
@@ -1213,5 +1275,65 @@ mod tests {
         let mut bad = tl;
         bad.charge_cues[0].threshold = 1.5;
         assert!(validate_timeline(&bad).is_err(), "threshold outside 0..=1 rejected");
+    }
+
+    /// (Surfaces) `paints` round-trips, defaults to None, and validates numeric sanity.
+    #[test]
+    fn paints_field_round_trips_and_defaults() {
+        let src = r#"(
+            skill_id: "painter",
+            phase_durations: ( windup: 0.1, active: 0.1, recovery: 0.1 ),
+            collision_windows: [
+                ( id: "roll", spawn: Scheduled( phase: Active ), active_duration: 1.0,
+                  shape: Sphere( radius: 0.3 ), motion: Linear( speed: 8.0 ),
+                  hit_filter: Enemies, hit_mode: OncePerTarget,
+                  paints: Some(( surface: "frost", radius: 0.45, mode: Trail( step: 0.8 ) )) ),
+            ],
+        )"#;
+        let tl: CastTimeline = ron::from_str(src).expect("paints content parses");
+        let paints = tl.collision_windows[0].paints.as_ref().expect("paints present");
+        assert_eq!(paints.surface, "frost");
+        assert_eq!(paints.radius, 0.45);
+        assert!(matches!(paints.mode, PaintMode::Trail { step } if step == 0.8));
+        assert!(paints.lifetime.is_none());
+        validate_timeline(&tl).expect("valid paints validates");
+        // Round-trip.
+        let s = ron::ser::to_string_pretty(&tl, Default::default()).unwrap();
+        let back: CastTimeline = ron::from_str(&s).unwrap();
+        assert!(back.collision_windows[0].paints.is_some());
+        // Omitted -> None (every existing .cast.ron parses unchanged).
+        let plain = timeline_with(basic_window("w"));
+        assert!(plain.collision_windows[0].paints.is_none());
+    }
+
+    /// (Surfaces) invalid paints fail validation loudly.
+    #[test]
+    fn paints_validation_rejects_bad_values() {
+        let mut win = basic_window("w");
+        win.paints = Some(PaintSpec {
+            surface: "frost".into(),
+            radius: 0.0,
+            mode: PaintMode::OnEnd,
+            lifetime: None,
+        });
+        assert!(validate_timeline(&timeline_with(win)).is_err(), "radius must be > 0");
+
+        let mut win = basic_window("w");
+        win.paints = Some(PaintSpec {
+            surface: "frost".into(),
+            radius: 0.4,
+            mode: PaintMode::Trail { step: 0.0 },
+            lifetime: None,
+        });
+        assert!(validate_timeline(&timeline_with(win)).is_err(), "trail step must be > 0");
+
+        let mut win = basic_window("w");
+        win.paints = Some(PaintSpec {
+            surface: "".into(),
+            radius: 0.4,
+            mode: PaintMode::OnEnd,
+            lifetime: None,
+        });
+        assert!(validate_timeline(&timeline_with(win)).is_err(), "surface must be non-empty");
     }
 }

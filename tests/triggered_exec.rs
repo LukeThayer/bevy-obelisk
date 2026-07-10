@@ -194,6 +194,7 @@ fn window(id: &str, offset: f32) -> CollisionWindow {
         hit_mode: HitMode::OncePerTarget,
         rehit_interval: None,
         emitter: None,
+        paints: None,
     }
 }
 
@@ -583,6 +584,7 @@ fn fireball_bolt_timeline() -> CastTimeline {
             hit_mode: HitMode::FirstOnly,
             rehit_interval: None,
             emitter: None,
+            paints: None,
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),
@@ -624,6 +626,7 @@ fn fireball_explosion_timeline() -> CastTimeline {
             hit_mode: HitMode::OncePerTarget,
             rehit_interval: None,
             emitter: None,
+            paints: None,
         }],
         acquisition: Default::default(),
         vfx_cues: HashMap::new(),

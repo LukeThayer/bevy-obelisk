@@ -371,6 +371,7 @@ base_damages = [{{ type = "fire", min = 15.0, max = 15.0 }}]
                 hit_mode: HitMode::OncePerTarget,
                 rehit_interval: None,
                 emitter: None,
+                paints: None,
             }],
             acquisition: Default::default(),
             vfx_cues: std::collections::HashMap::new(),
