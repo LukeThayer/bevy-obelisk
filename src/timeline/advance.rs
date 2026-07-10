@@ -240,6 +240,9 @@ pub fn validate_casts(
                 });
             }
             commands.entity(patch).despawn();
+            // Consume-once (D7): drop the spent patch from THIS tick's snapshot so a later pending
+            // cast can't re-match it (despawn is deferred) — retain preserves the seq-sorted order.
+            patch_view.retain(|pv| pv.0 != patch);
         }
         let cd = skill.effective_cooldown(attrs.0.cooldown_reduction) as f32;
         if cd > 0.0 {

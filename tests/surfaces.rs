@@ -612,3 +612,49 @@ fn on_surface_miss_fizzles_or_falls_back() {
         "SelfPoint fallback anchors at the caster, got {hb_pos:?}"
     );
 }
+
+#[test]
+fn same_tick_double_cast_consumes_the_patch_exactly_once() {
+    let mut t = surf_app(12);
+    let a = spawn_combatant(&mut t, "caster_a", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    let b = spawn_combatant(
+        &mut t,
+        "caster_b",
+        Vec3::new(0.0, 0.0, 1.0),
+        obelisk_bevy::prelude::Faction::Enemy,
+    );
+    load_timeline(&mut t, "spire_probe", "tests/fixtures/cast/spire_probe.cast.ron");
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "frost".into(),
+        position: Vec3::new(4.0, 0.0, 0.0),
+        owner: a,
+    });
+    t.app.world_mut().flush();
+    {
+        use obelisk_bevy::verbs::ObeliskCommandsExt;
+        t.app.world_mut().commands().entity(a).grant_skill("spire_probe");
+        t.app.world_mut().commands().entity(b).grant_skill("spire_probe");
+        t.app
+            .world_mut()
+            .commands()
+            .entity(a)
+            .cast_skill_at_point("spire_probe", Vec3::new(4.0, 0.0, 0.0));
+        t.app
+            .world_mut()
+            .commands()
+            .entity(b)
+            .cast_skill_at_point("spire_probe", Vec3::new(4.0, 0.0, 0.0));
+    }
+    t.app.world_mut().flush();
+    t.advance_ticks(10);
+    assert_eq!(t.rec().cast_began.len(), 1, "exactly one cast wins the contested patch");
+    assert_eq!(t.rec().cast_rejected.len(), 1, "the loser fizzles (paid-nothing rejection)");
+    let consumed = t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .filter(|r| r.reason == SurfaceRemoveReason::Consumed)
+        .count();
+    assert_eq!(consumed, 1, "exactly one Consumed event");
+    assert_eq!(patch_count(&mut t, "frost"), 0);
+}
