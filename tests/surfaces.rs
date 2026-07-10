@@ -418,3 +418,40 @@ fn on_enter_only_fires_once_per_visit() {
         "re-entering fires the enter edge again"
     );
 }
+
+#[test]
+fn dead_victims_stop_receiving_standing_ticks() {
+    let mut t = surf_app(11);
+    let painter = spawn_combatant(&mut t, "painter", Vec3::new(-5.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Player);
+    let victim = spawn_combatant(&mut t, "victim", Vec3::new(3.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Enemy);
+    load_timeline(&mut t, "burning_tick", "tests/fixtures/cast/burning_tick.cast.ron");
+    obelisk_bevy::spatial::boxes::insert_hurtbox(
+        &mut t.app.world_mut().commands(),
+        victim,
+        0.5,
+        Vec3::new(3.0, 0.0, 0.0),
+    );
+    t.app.world_mut().flush();
+    t.advance_ticks(3);
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "burning".into(),
+        position: Vec3::new(3.0, 0.0, 0.0),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    t.advance_ticks(30); // ~2 ticks land while alive
+    let ticks_while_alive = damage_events_for(&t, "burning_tick");
+    assert!(ticks_while_alive >= 1, "sanity: standing ticks land while alive");
+    // Kill the victim in place (death does not despawn).
+    {
+        let mut entity_mut = t.app.world_mut().entity_mut(victim);
+        let mut attrs = entity_mut.get_mut::<obelisk_bevy::prelude::Attributes>().unwrap();
+        attrs.0.current_life = 0.0;
+    }
+    t.advance_ticks(60);
+    assert_eq!(
+        damage_events_for(&t, "burning_tick"),
+        ticks_while_alive,
+        "no further standing ticks against a corpse"
+    );
+}

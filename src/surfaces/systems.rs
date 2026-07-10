@@ -5,7 +5,7 @@
 use bevy::prelude::*;
 
 use crate::assets::{CastTimeline, CastTimelineHandles, PaintMode, PaintSpec};
-use crate::core::components::{Combatant, Faction};
+use crate::core::components::{Attributes, Combatant, Faction};
 use crate::events::HitboxEnded;
 use crate::spatial::boxes::Hitbox;
 use crate::spatial::filter::passes_filter;
@@ -164,14 +164,21 @@ pub fn apply_standing_payloads(
     registry: Res<SurfaceRegistry>,
     mut state: ResMut<StandingState>,
     patches: Query<(Entity, &SurfacePatch, &Transform)>,
-    combatants: Query<(Entity, &Transform, &Faction), With<Combatant>>,
+    combatants: Query<(Entity, &Transform, &Faction, &Attributes), With<Combatant>>,
 ) {
     let now = time.elapsed_secs();
     // Collect + sort overlaps deterministically.
     let mut overlaps: Vec<(u64, Entity, &SurfacePatch, Vec3, Entity, Vec3, Faction)> = Vec::new();
     let mut inside_now: HashSet<(Entity, Entity)> = HashSet::new();
     for (pe, patch, ptf) in &patches {
-        for (ve, vtf, vf) in &combatants {
+        for (ve, vtf, vf, attrs) in &combatants {
+            // Precedent: tick_effects_system (core/tick.rs) gates on is_alive() because death
+            // doesn't despawn. Without this gate a corpse standing in a persistent surface keeps
+            // receiving tick_skill hits, which re-trigger EntityDied and the (non-idempotent)
+            // loot observer every rehit_interval.
+            if !attrs.0.is_alive() {
+                continue;
+            }
             if patch_contains(ptf.translation, patch.radius, vtf.translation) {
                 inside_now.insert((pe, ve));
                 overlaps.push((
