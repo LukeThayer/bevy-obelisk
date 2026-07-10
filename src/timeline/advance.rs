@@ -47,6 +47,12 @@ pub fn validate_casts(
     surface_patches: Query<(Entity, &SurfacePatch, &Transform)>,
     mut cooldowns: ResMut<Cooldowns>,
 ) {
+    // Nothing pending → nothing to validate; skip the patch_view build entirely (its per-patch
+    // String clone + sort is pure waste on the common empty-queue tick). Behavior-identical: the
+    // loop below is patch_view's only consumer, so an empty `pending` did no work either way.
+    if pending.is_empty() {
+        return;
+    }
     // Pre-collect the live patches once, seq-sorted, so acquisition's nearest-match sees a
     // deterministic candidate order (spec §5.1 — surfaces gate/snap/consume for point casts).
     let mut patch_view: Vec<PatchView> = surface_patches

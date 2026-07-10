@@ -789,3 +789,91 @@ fn overlapping_same_type_patches_tick_once_per_interval() {
         "overlapping patches tick the victim once per interval, got {ticks}"
     );
 }
+
+/// I1 (evict-once guard): two SAME-TICK trail painters at `max_patches` must never double-fire
+/// eviction on the SAME patch entity. Both `paint_surfaces` calls select their evict victim from
+/// the `existing` snapshot, which does NOT reflect this-tick deferred despawns — so pre-fix they
+/// would both pick the same oldest patch, emitting a duplicate `SurfaceRemoved{Evicted}` and a
+/// double `despawn` (Bevy warn). The shared `evicted_this_tick` ledger makes that structurally
+/// impossible on the system path.
+///
+/// Construction (deterministic, no RNG): two casters 10 m apart in Z each roll a `capped` trail
+/// along +X. `capped` has max_patches = 3, merge_radius = 0.05 — the trails are far enough apart
+/// (Δz = 10) that they never merge-dedup each other, and 3 pre-filled patches sit at z = 20,
+/// x ∈ {20, 22, 24}, far from both trails. The two casters cast in the SAME frame at identical
+/// speed, so their hitboxes spawn and paint in lockstep: EVERY paint tick is a two-paint burst at
+/// cap — exactly the double-fire trigger.
+///
+/// Invariants pinned:
+///   * NO duplicate patch Entity in the Evicted stream (every evicted entity appears exactly
+///     once) — the direct regression on the double-fire.
+///   * Conservation: painted − evicted == live patch_count (every `capped` paint is either still
+///     live or evicted exactly once; nothing expires here — lifetime 60 s — and nothing is
+///     consumed). Pre-fix the duplicate events inflate `evicted`, breaking this too.
+///   * Each burst tick evicts exactly ONE fewer than it paints (painter A evicts the oldest;
+///     painter B, seeing A's victim already ledgered, is at exactly cap and evicts none), so two
+///     lockstep painters hold the live count one OVER the cap — the documented transient overshoot
+///     (`try_paint` fn doc), here a steady 4. This is CORRECT, not a leak: no entity is evicted
+///     twice and the stream stays clean.
+#[test]
+fn same_tick_burst_paints_evict_each_patch_at_most_once() {
+    let mut t = surf_app(14);
+    let a = spawn_combatant(&mut t, "roller_a", Vec3::new(0.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Player);
+    let b = spawn_combatant(&mut t, "roller_b", Vec3::new(0.0, 0.0, 10.0), obelisk_bevy::prelude::Faction::Player);
+    // cold_probe is a REGISTERED skill; map its handle to the capped-trail timeline for this test.
+    load_timeline(&mut t, "cold_probe", "tests/fixtures/cast/capped_roller.cast.ron");
+    t.app.update();
+
+    // Pre-fill the cap: 3 `capped` patches away from both trails (flush+update between each so
+    // they commit with distinct, increasing seq — these are the first eviction victims).
+    for i in 0..3 {
+        t.app.world_mut().trigger(PaintSurface {
+            surface: "capped".into(),
+            position: Vec3::new(20.0 + i as f32 * 2.0, 0.0, 20.0),
+            owner: a,
+        });
+        t.app.world_mut().flush();
+        t.app.update();
+    }
+    assert_eq!(patch_count(&mut t, "capped"), 3, "cap pre-filled to max_patches");
+
+    // Both casters roll +X in the SAME frame (before any tick advances) — lockstep painters.
+    grant_and_cast_dir(&mut t, a, "cold_probe", Vec3::X);
+    grant_and_cast_dir(&mut t, b, "cold_probe", Vec3::X);
+    t.advance_ticks(30);
+
+    // Every `capped` Evicted event, in stream order.
+    let evicted_patches: Vec<Entity> = t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .filter(|r| r.surface == "capped" && r.reason == SurfaceRemoveReason::Evicted)
+        .map(|r| r.patch)
+        .collect();
+    // PRIMARY: no patch entity is evicted more than once (dedup length equals raw length).
+    let unique: std::collections::HashSet<Entity> = evicted_patches.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        evicted_patches.len(),
+        "double-fire: a patch was evicted more than once — {evicted_patches:?}"
+    );
+    // Non-vacuous: the burst actually churned eviction (the pre-fill victims + trail victims).
+    assert!(
+        evicted_patches.len() >= 3,
+        "expected the two lockstep trails to evict several patches, got {}",
+        evicted_patches.len()
+    );
+
+    // Conservation over `capped`: painted − evicted == live count (nothing expired/consumed).
+    let painted = t.rec().surfaces_painted.iter().filter(|p| p.surface == "capped").count();
+    let evicted = evicted_patches.len();
+    let live = patch_count(&mut t, "capped");
+    assert_eq!(
+        painted - evicted,
+        live,
+        "conservation broken: painted {painted} − evicted {evicted} != live {live}"
+    );
+    // Two lockstep painters hold the cap one over (documented transient overshoot; each burst
+    // evicts exactly one fewer than it paints). This is the honest steady state — NOT a leak.
+    assert_eq!(live, 4, "two lockstep painters steady-state one over cap (3 + 1)");
+}

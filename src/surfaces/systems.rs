@@ -58,6 +58,10 @@ pub fn paint_surfaces(
     existing: Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
 ) {
     let mut batch: Vec<(String, Vec3)> = Vec::new();
+    // ONE eviction ledger for the whole run: a burst of same-type paints at cap (two Trail
+    // hitboxes in one `paint_surfaces` tick) shares it so they cannot both evict the same oldest
+    // patch off the stale `existing` snapshot (I1 — see `try_paint`).
+    let mut evicted: HashSet<Entity> = HashSet::new();
     let mut sorted: Vec<_> = hitboxes.iter_mut().collect();
     sorted.sort_by_key(|(e, _, _, _)| e.index());
     for (e, hb, tf, trail) in sorted {
@@ -78,6 +82,7 @@ pub fn paint_surfaces(
                     &mut seq,
                     &existing,
                     &mut batch,
+                    &mut evicted,
                     &paints.surface,
                     pos,
                     Some(paints.radius),
@@ -96,6 +101,7 @@ pub fn paint_surfaces(
                         &mut seq,
                         &existing,
                         &mut batch,
+                        &mut evicted,
                         &paints.surface,
                         pos,
                         Some(paints.radius),
@@ -133,12 +139,16 @@ pub fn on_hitbox_ended_paint(
     }
     let owner_faction = factions.get(e.caster).copied().unwrap_or_default();
     let mut batch = Vec::new();
+    // Fresh per invocation (same blindness as today): residual same-tick cross-OBSERVER bursts at
+    // cap remain snapshot-blind; rare, deterministic, tracked for the arena increment.
+    let mut evicted: HashSet<Entity> = HashSet::new();
     try_paint(
         &mut commands,
         &registry,
         &mut seq,
         &existing,
         &mut batch,
+        &mut evicted,
         &paints.surface,
         e.position,
         Some(paints.radius),
@@ -172,7 +182,7 @@ pub fn apply_standing_payloads(
 ) {
     let now = time.elapsed_secs();
     // Collect + sort overlaps deterministically.
-    let mut overlaps: Vec<(u64, Entity, &SurfacePatch, Vec3, Entity, Vec3, Faction)> = Vec::new();
+    let mut overlaps: Vec<(u64, Entity, &SurfacePatch, Entity, Vec3, Faction)> = Vec::new();
     let mut inside_now: HashSet<(Entity, Entity)> = HashSet::new();
     for (pe, patch, ptf) in &patches {
         for (ve, vtf, vf, attrs) in &combatants {
@@ -189,7 +199,6 @@ pub fn apply_standing_payloads(
                     patch.seq,
                     pe,
                     patch,
-                    ptf.translation,
                     ve,
                     vtf.translation,
                     *vf,
@@ -197,10 +206,10 @@ pub fn apply_standing_payloads(
             }
         }
     }
-    overlaps.sort_by_key(|(seq, _, _, _, ve, _, _)| (*seq, ve.index()));
+    overlaps.sort_by_key(|(seq, _, _, ve, _, _)| (*seq, ve.index()));
 
     let mut fired_this_tick: HashSet<(Entity, String)> = HashSet::new();
-    for (_, pe, patch, _ppos, victim, victim_pos, victim_faction) in overlaps {
+    for (_, pe, patch, victim, victim_pos, victim_faction) in overlaps {
         let Some(st) = registry.0.get(&patch.surface) else {
             continue;
         };

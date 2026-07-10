@@ -1,0 +1,13 @@
+// Trail-painter fixture for the I1 evict-once regression. Mirrors paint_roller but paints the
+// `capped` surface (max_patches = 3) so two synchronized casters at cap burst-evict in ONE
+// `paint_surfaces` tick. skill_id reuses the REGISTERED `cold_probe` skill; `load_timeline` maps
+// skill_id -> this handle explicitly, so cold_probe uses this timeline for the regression test only.
+( skill_id: "cold_probe",
+  phase_durations: ( windup: 0.0, active: 0.05, recovery: 0.0 ),
+  collision_windows: [
+    ( id: "roll", spawn: Scheduled( phase: Active, offset: 0.0 ), active_duration: 1.0,
+      shape: Sphere( radius: 0.3 ), motion: Linear( speed: 8.0 ),
+      hit_filter: Enemies, hit_mode: OncePerTarget,
+      paints: Some(( surface: "capped", radius: 0.45, mode: Trail( step: 0.5 ) )) ),
+  ],
+)

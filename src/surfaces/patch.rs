@@ -82,6 +82,7 @@ pub(crate) fn try_paint(
     seq: &mut SurfaceSeq,
     existing: &Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
     painted_this_tick: &mut Vec<(String, Vec3)>,
+    evicted_this_tick: &mut std::collections::HashSet<Entity>,
     surface_id: &str,
     position: Vec3,
     radius_override: Option<f32>,
@@ -104,22 +105,31 @@ pub(crate) fn try_paint(
     if near_existing || near_batch {
         return None;
     }
-    // Replace-oldest cap (committed patches only — see fn doc).
+    // Replace-oldest cap (committed patches only — see fn doc). I1: the `existing` snapshot never
+    // reflects THIS-tick deferred despawns, so a same-type patch already evicted by an earlier
+    // paint in this run still shows up here. Exclude anything in `evicted_this_tick` — it is
+    // as-good-as-gone, so it is neither re-selected as a victim NOR counted toward the live total
+    // (without this, two burst paints at cap both pick the same oldest patch → double-fire).
     let mut same: Vec<(Entity, u64, Vec3, String)> = existing
         .iter()
-        .filter(|(_, p, _)| p.surface == surface_id)
+        .filter(|(e, p, _)| p.surface == surface_id && !evicted_this_tick.contains(e))
         .map(|(e, p, tf)| (e, p.seq, tf.translation, p.surface.clone()))
         .collect();
     if same.len() + 1 > st.max_patches {
         same.sort_by_key(|(_, s, _, _)| *s);
         for (e, _, pos, surf) in same.iter().take(same.len() + 1 - st.max_patches) {
-            commands.trigger(SurfaceRemoved {
-                patch: *e,
-                surface: surf.clone(),
-                position: *pos,
-                reason: SurfaceRemoveReason::Evicted,
-            });
-            commands.entity(*e).despawn();
+            // Insert-guarded: even if the filter above ever misses, a second attempt to evict the
+            // same entity is a structural no-op — no duplicate `SurfaceRemoved{Evicted}`, no double
+            // `despawn` warn. This is the last-line guarantee the removal-event stream stays clean.
+            if evicted_this_tick.insert(*e) {
+                commands.trigger(SurfaceRemoved {
+                    patch: *e,
+                    surface: surf.clone(),
+                    position: *pos,
+                    reason: SurfaceRemoveReason::Evicted,
+                });
+                commands.entity(*e).despawn();
+            }
         }
     }
     seq.0 += 1;
@@ -159,12 +169,16 @@ pub fn on_paint_surface(
     let e = ev.event();
     let owner_faction = factions.get(e.owner).copied().unwrap_or_default();
     let mut batch = Vec::new();
+    // Fresh per invocation (same blindness as today): residual same-tick cross-OBSERVER bursts at
+    // cap remain snapshot-blind; rare, deterministic, tracked for the arena increment.
+    let mut evicted: std::collections::HashSet<Entity> = std::collections::HashSet::new();
     try_paint(
         &mut commands,
         &registry,
         &mut seq,
         &existing,
         &mut batch,
+        &mut evicted,
         &e.surface,
         e.position,
         None,
