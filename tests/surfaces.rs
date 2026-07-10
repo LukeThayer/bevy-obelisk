@@ -61,3 +61,144 @@ fn add_obelisk_surfaces_inserts_the_registry() {
     let reg = t.app.world().resource::<SurfaceRegistry>();
     assert!(reg.0.contains_key("frost"));
 }
+
+use bevy::prelude::*;
+use obelisk_bevy::surfaces::{
+    PaintSurface, SurfacePatch, SurfaceRemoveReason,
+};
+use obelisk_bevy::testkit::ObeliskTestApp;
+use stat_core::StatBlock;
+
+/// Test app with the surface fixtures registered.
+fn surf_app(seed: u64) -> ObeliskTestApp {
+    let mut t = ObeliskTestApp::new(seed);
+    t.app
+        .add_obelisk_surfaces(Path::new("tests/fixtures/surfaces"));
+    t
+}
+
+fn spawn_combatant(
+    t: &mut ObeliskTestApp,
+    id: &str,
+    pos: Vec3,
+    faction: obelisk_bevy::prelude::Faction,
+) -> Entity {
+    let mut block = StatBlock::with_id(id);
+    block.max_life.base = 200.0;
+    block.current_life = 200.0;
+    block.max_mana.base = 100.0;
+    block.current_mana = 100.0;
+    t.app
+        .world_mut()
+        .spawn((
+            obelisk_bevy::prelude::Combatant,
+            obelisk_bevy::prelude::Attributes(block),
+            faction,
+            obelisk_bevy::prelude::ObeliskId(id.into()),
+            Transform::from_translation(pos),
+        ))
+        .id()
+}
+
+fn patch_count(t: &mut ObeliskTestApp, surface: &str) -> usize {
+    let mut q = t.app.world_mut().query::<&SurfacePatch>();
+    q.iter(t.app.world()).filter(|p| p.surface == surface).count()
+}
+
+#[test]
+fn paint_request_spawns_a_patch_and_dedups() {
+    let mut t = surf_app(1);
+    let owner = spawn_combatant(&mut t, "painter", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    t.app.update();
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "frost".into(),
+        position: Vec3::new(2.0, 0.0, 0.0),
+        owner,
+    });
+    t.app.world_mut().flush();
+    t.app.update();
+    assert_eq!(patch_count(&mut t, "frost"), 1);
+    assert_eq!(t.rec().surfaces_painted.len(), 1);
+    assert_eq!(t.rec().surfaces_painted[0].surface, "frost");
+    // A second paint within merge_radius (0.25 default) dedups — still one patch.
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "frost".into(),
+        position: Vec3::new(2.1, 0.0, 0.0),
+        owner,
+    });
+    t.app.world_mut().flush();
+    t.app.update();
+    assert_eq!(patch_count(&mut t, "frost"), 1, "merge_radius dedup");
+    // But a paint farther away spawns a second patch.
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "frost".into(),
+        position: Vec3::new(3.0, 0.0, 0.0),
+        owner,
+    });
+    t.app.world_mut().flush();
+    t.app.update();
+    assert_eq!(patch_count(&mut t, "frost"), 2);
+}
+
+#[test]
+fn patches_expire_and_evict_oldest_at_cap() {
+    let mut t = surf_app(1);
+    let owner = spawn_combatant(&mut t, "painter", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    t.app.update();
+    // dew lifetime = 0.3s -> gone within ~30 ticks, with an Expired removal event.
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "dew".into(),
+        position: Vec3::new(1.0, 0.0, 1.0),
+        owner,
+    });
+    t.app.world_mut().flush();
+    t.advance_ticks(30);
+    assert_eq!(patch_count(&mut t, "dew"), 0, "dew expired");
+    assert!(t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .any(|r| r.surface == "dew" && r.reason == SurfaceRemoveReason::Expired));
+    // capped max_patches = 3: painting 5 distinct spots keeps the NEWEST 3 (oldest evicted).
+    for i in 0..5 {
+        t.app.world_mut().trigger(PaintSurface {
+            surface: "capped".into(),
+            position: Vec3::new(i as f32 * 2.0, 0.0, 5.0),
+            owner,
+        });
+        t.app.world_mut().flush();
+        t.app.update();
+    }
+    assert_eq!(patch_count(&mut t, "capped"), 3);
+    let evicted: Vec<_> = t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .filter(|r| r.surface == "capped" && r.reason == SurfaceRemoveReason::Evicted)
+        .collect();
+    assert_eq!(evicted.len(), 2, "two oldest evicted");
+    // The SURVIVING patches are the three newest (x = 4, 6, 8).
+    let mut q = t.app.world_mut().query::<(&SurfacePatch, &Transform)>();
+    let mut xs: Vec<f32> = q
+        .iter(t.app.world())
+        .filter(|(p, _)| p.surface == "capped")
+        .map(|(_, tf)| tf.translation.x)
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    assert_eq!(xs, vec![4.0, 6.0, 8.0]);
+}
+
+#[test]
+fn unknown_surface_paint_is_a_warn_not_a_panic() {
+    let mut t = surf_app(1);
+    let owner = spawn_combatant(&mut t, "painter", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    t.app.update();
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "no_such_surface".into(),
+        position: Vec3::ZERO,
+        owner,
+    });
+    t.app.world_mut().flush();
+    t.app.update(); // must not panic
+    assert_eq!(t.rec().surfaces_painted.len(), 0);
+}

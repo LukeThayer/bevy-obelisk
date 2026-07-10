@@ -31,6 +31,8 @@ pub struct EventRecorder {
     pub died: Vec<EntityDied>,
     pub hitbox_ended: Vec<HitboxEnded>,
     pub cues: Vec<CueEvent>,
+    pub surfaces_painted: Vec<crate::surfaces::SurfacePainted>,
+    pub surfaces_removed: Vec<crate::surfaces::SurfaceRemoved>,
 }
 
 pub struct EventRecorderPlugin;
@@ -70,6 +72,16 @@ impl Plugin for EventRecorderPlugin {
         app.add_observer(|e: On<CueEvent>, mut r: ResMut<EventRecorder>| {
             r.cues.push(e.event().clone())
         });
+        app.add_observer(
+            |e: On<crate::surfaces::SurfacePainted>, mut r: ResMut<EventRecorder>| {
+                r.surfaces_painted.push(e.event().clone())
+            },
+        );
+        app.add_observer(
+            |e: On<crate::surfaces::SurfaceRemoved>, mut r: ResMut<EventRecorder>| {
+                r.surfaces_removed.push(e.event().clone())
+            },
+        );
     }
 }
 

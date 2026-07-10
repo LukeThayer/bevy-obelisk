@@ -115,6 +115,7 @@ impl Plugin for ObeliskSimPlugin {
             .add_plugins(net::ObeliskNetPlugin)
             .add_plugins(vfx::ObeliskCuePlugin)
             .add_plugins(loot::ObeliskLootPlugin);
+        app.add_plugins(surfaces::ObeliskSurfacesPlugin);
 
         // Task 11 review hardening: pin `FixedUpdate` (the sim schedule) to the
         // single-threaded executor. This is a lockstep-deterministic simulation —
