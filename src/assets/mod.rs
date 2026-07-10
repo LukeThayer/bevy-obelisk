@@ -1335,5 +1335,17 @@ mod tests {
             lifetime: None,
         });
         assert!(validate_timeline(&timeline_with(win)).is_err(), "surface must be non-empty");
+
+        let mut win = basic_window("w");
+        win.paints = Some(PaintSpec {
+            surface: "frost".into(),
+            radius: 0.4,
+            mode: PaintMode::OnEnd,
+            lifetime: Some(0.0),
+        });
+        assert!(
+            validate_timeline(&timeline_with(win)).is_err(),
+            "lifetime override must be > 0"
+        );
     }
 }
