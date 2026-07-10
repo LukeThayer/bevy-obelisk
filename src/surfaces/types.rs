@@ -209,6 +209,15 @@ pub fn load_surfaces_dir(
                     st.id
                 ));
             }
+            for tag in &r.tags_any {
+                if crate::surfaces::systems::parse_skill_tag(tag).is_none() {
+                    return Err(format!(
+                        "surface '{}': on_skill_contact tag '{tag}' is not a known skill tag \
+                         (it would silently never match)",
+                        st.id
+                    ));
+                }
+            }
             if let Some(reg) = skills {
                 if !reg.0.contains_key(&r.trigger_skill) {
                     return Err(format!(

@@ -268,7 +268,7 @@ pub struct SurfaceContacts(pub std::collections::HashSet<String>);
 /// `Vec<SkillTag>` (an enum), whereas a surface's `on_skill_contact.tags_any` is authored as loose
 /// strings, so the string is resolved to the enum for matching (the brief assumed `tags: Vec<String>`
 /// and a direct `st == t`). An unknown tag string resolves to `None` and matches nothing.
-fn parse_skill_tag(s: &str) -> Option<SkillTag> {
+pub(crate) fn parse_skill_tag(s: &str) -> Option<SkillTag> {
     use serde::de::{value::StrDeserializer, IntoDeserializer, Deserialize};
     let de: StrDeserializer<serde::de::value::Error> = s.into_deserializer();
     SkillTag::deserialize(de).ok()

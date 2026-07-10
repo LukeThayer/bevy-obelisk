@@ -52,6 +52,17 @@ fn surfaces_loader_rejects_bad_refs() {
     .unwrap();
     let err2 = load_surfaces_dir(&dir2, Some(&reg)).unwrap_err();
     assert!(err2.contains("no_such_effect"), "error names the bad effect: {err2}");
+    // unknown on_skill_contact tag (would silently never match at runtime)
+    let dir3 = std::env::temp_dir().join("surf_bad_tag");
+    std::fs::create_dir_all(&dir3).unwrap();
+    std::fs::write(
+        dir3.join("bad.toml"),
+        "id = \"bad\"\n[[on_skill_contact]]\ntags_any = [\"fira\"]\ntrigger_skill = \"test_ignite\"\n",
+    )
+    .unwrap();
+    let err3 = load_surfaces_dir(&dir3, Some(&reg)).unwrap_err();
+    assert!(err3.contains("bad"), "error names the surface id: {err3}");
+    assert!(err3.contains("fira"), "error names the bad tag: {err3}");
 }
 
 #[test]
