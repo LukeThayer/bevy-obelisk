@@ -1,0 +1,7 @@
+id = "mud"
+lifetime = 60.0
+
+[standing]
+filter = "enemies"
+tick_skill = "burning_tick"
+on_enter_only = true

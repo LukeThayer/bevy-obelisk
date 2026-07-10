@@ -1,0 +1,7 @@
+id = "oil"
+lifetime = 30.0
+
+[[on_skill_contact]]
+tags_any = ["fire"]
+trigger_skill = "test_ignite"
+consume = true

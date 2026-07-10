@@ -87,6 +87,7 @@ pub mod prelude;
 pub mod present;
 pub mod scenario;
 pub mod spatial;
+pub mod surfaces;
 #[cfg(feature = "test-support")]
 pub mod testkit;
 pub mod timeline;

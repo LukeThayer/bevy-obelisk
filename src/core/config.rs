@@ -41,6 +41,10 @@ pub trait ObeliskConfigExt {
     fn add_obelisk_config_constants(&mut self, path: &Path) -> &mut Self;
     fn add_obelisk_effects(&mut self, dir: &Path) -> &mut Self;
     fn add_obelisk_skills(&mut self, source: SkillSource) -> &mut Self;
+    /// Load `config/surfaces/*.toml` into a [`crate::surfaces::SurfaceRegistry`] resource.
+    /// Call AFTER `add_obelisk_effects` + `add_obelisk_skills` so effect/skill refs validate;
+    /// without them the refs are accepted with a warn (registry/skills not yet available).
+    fn add_obelisk_surfaces(&mut self, dir: &Path) -> &mut Self;
     fn seed_combat_rng(&mut self, seed: u64) -> &mut Self;
 }
 
@@ -71,6 +75,20 @@ impl ObeliskConfigExt for App {
             SkillSource::Toml(s) => stat_core::config::parse_skills(&s).expect("parse skills"),
         };
         self.insert_resource(SkillRegistry(map));
+        self
+    }
+    fn add_obelisk_surfaces(&mut self, dir: &Path) -> &mut Self {
+        let map = {
+            let skills = self.world().get_resource::<crate::core::config::SkillRegistry>();
+            if skills.is_none() {
+                warn!(
+                    "add_obelisk_surfaces: SkillRegistry not present — tick_skill/trigger_skill \
+                     refs will not be validated (call add_obelisk_skills first)"
+                );
+            }
+            crate::surfaces::load_surfaces_dir(dir, skills).expect("load surfaces dir")
+        };
+        self.insert_resource(crate::surfaces::SurfaceRegistry(map));
         self
     }
     fn seed_combat_rng(&mut self, seed: u64) -> &mut Self {

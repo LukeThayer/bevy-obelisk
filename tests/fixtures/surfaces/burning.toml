@@ -1,0 +1,7 @@
+id = "burning"
+lifetime = 8.0
+
+[standing]
+filter = "enemies"
+tick_skill = "burning_tick"
+rehit_interval = 0.2

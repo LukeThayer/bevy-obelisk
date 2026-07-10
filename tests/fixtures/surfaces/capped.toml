@@ -1,0 +1,4 @@
+id = "capped"
+lifetime = 60.0
+merge_radius = 0.05
+max_patches = 3

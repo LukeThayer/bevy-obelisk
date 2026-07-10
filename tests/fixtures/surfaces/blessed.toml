@@ -1,0 +1,7 @@
+id = "blessed"
+lifetime = 60.0
+
+[standing]
+filter = "allies"
+effect = "empower"
+rehit_interval = 0.2

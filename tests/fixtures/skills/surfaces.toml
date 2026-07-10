@@ -1,0 +1,79 @@
+[[skills]]
+id = "paint_roller"
+name = "Paint Roller"
+tags = ["spell", "cold"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "cold", min = 1.0, max = 1.0 }]
+
+[[skills]]
+id = "paint_blast"
+name = "Paint Blast"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "fire", min = 1.0, max = 1.0 }]
+
+[[skills]]
+id = "fire_probe"
+name = "Fire Probe"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "fire", min = 1.0, max = 1.0 }]
+
+[[skills]]
+id = "cold_probe"
+name = "Cold Probe"
+tags = ["spell", "cold"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "cold", min = 1.0, max = 1.0 }]
+
+[[skills]]
+id = "test_ignite"
+name = "Test Ignite"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "fire", min = 10.0, max = 10.0 }]
+
+[[skills]]
+id = "burning_tick"
+name = "Burning Tick"
+tags = ["spell", "fire"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "fire", min = 5.0, max = 5.0 }]
+
+[[skills]]
+id = "spire_probe"
+name = "Spire Probe"
+tags = ["spell", "cold"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "cold", min = 8.0, max = 8.0 }]
+
+[[skills]]
+id = "spire_fallback"
+name = "Spire Fallback"
+tags = ["spell", "cold"]
+targeting = "single_enemy"
+delivery = "projectile"
+mana_cost = 0.0
+[skills.damage]
+base_damages = [{ type = "cold", min = 8.0, max = 8.0 }]
