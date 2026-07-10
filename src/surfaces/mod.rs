@@ -20,7 +20,9 @@ pub use patch::{
     decay_surfaces, on_paint_surface, patch_contains, PaintSurface, SurfacePainted, SurfacePatch,
     SurfaceRemoveReason, SurfaceRemoved, SurfaceSeq,
 };
-pub use systems::{on_hitbox_ended_paint, paint_surfaces, TrailPainted};
+pub use systems::{
+    apply_standing_payloads, on_hitbox_ended_paint, paint_surfaces, StandingState, TrailPainted,
+};
 pub use types::{
     load_surfaces_dir, ContactReaction, StandingFilter, StandingPayload, SurfaceRegistry,
     SurfaceType, SurfaceVisuals, SURFACE_MATCH_SLACK, SURFACE_Y_TOLERANCE,
@@ -31,13 +33,15 @@ impl Plugin for ObeliskSurfacesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SurfaceRegistry>()
             .init_resource::<SurfaceSeq>();
+        app.init_resource::<systems::StandingState>();
         app.add_systems(
             bevy::app::FixedUpdate,
             decay_surfaces.in_set(crate::ObeliskSet::Advance),
         );
         app.add_systems(
             bevy::app::FixedUpdate,
-            paint_surfaces
+            (paint_surfaces, systems::apply_standing_payloads)
+                .chain()
                 .in_set(crate::ObeliskSet::ResolveHits)
                 .before(crate::spatial::detect::detect_overlaps),
         );

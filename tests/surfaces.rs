@@ -287,3 +287,134 @@ fn on_end_window_paints_once_at_the_end_position_with_lifetime_override() {
     t.advance_ticks(90); // ~1.5s more (total ~4.0s)
     assert_eq!(patch_count(&mut t, "burning"), 0, "override lifetime expired");
 }
+
+fn damage_events_for(t: &ObeliskTestApp, skill: &str) -> usize {
+    t.rec().damage_resolved.iter().filter(|d| d.skill_id == skill).count()
+}
+
+#[test]
+fn standing_in_burning_ticks_damage_attributed_to_the_painter() {
+    let mut t = surf_app(4);
+    let painter = spawn_combatant(&mut t, "painter", Vec3::new(-5.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Player);
+    let victim = spawn_combatant(&mut t, "victim", Vec3::new(3.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Enemy);
+    load_timeline(&mut t, "burning_tick", "tests/fixtures/cast/burning_tick.cast.ron");
+    // Hurtbox so the tick skill's blast can actually hit the victim.
+    obelisk_bevy::spatial::boxes::insert_hurtbox(
+        &mut t.app.world_mut().commands(),
+        victim,
+        0.5,
+        Vec3::new(3.0, 0.0, 0.0),
+    );
+    t.app.world_mut().flush();
+    t.advance_ticks(3); // spatial pipeline sees the fresh static collider (probe note)
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "burning".into(),
+        position: Vec3::new(3.0, 0.0, 0.0),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    // rehit_interval 0.2s -> over 1.0s expect ~5 tick executions.
+    t.advance_ticks(60);
+    let ticks = damage_events_for(&t, "burning_tick");
+    assert!(
+        (4..=6).contains(&ticks),
+        "burning ticks ~5x in 1s, got {ticks}"
+    );
+    let d = t
+        .rec()
+        .damage_resolved
+        .iter()
+        .find(|d| d.skill_id == "burning_tick")
+        .unwrap();
+    assert_eq!(d.caster, painter, "standing damage attributed to the painter");
+    assert_eq!(d.target, victim);
+    // Painter (same faction as... no: painter is Player, filter enemies) never self-ticks: no
+    // damage against the painter.
+    assert!(
+        !t.rec().damage_resolved.iter().any(|d| d.target == painter),
+        "filter=enemies never ticks the painter's own faction"
+    );
+}
+
+#[test]
+fn standing_effect_applies_to_allies_and_stops_on_exit() {
+    let mut t = surf_app(5);
+    let painter = spawn_combatant(&mut t, "priest", Vec3::new(0.0, 0.0, -4.0), obelisk_bevy::prelude::Faction::Player);
+    let ally = spawn_combatant(&mut t, "ally", Vec3::new(0.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Player);
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "blessed".into(),
+        position: Vec3::ZERO,
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    t.advance_ticks(20);
+    let applied = t
+        .rec()
+        .effect_applied
+        .iter()
+        .filter(|e| e.effect_id == "empower" && e.target == ally)
+        .count();
+    assert!(applied >= 1, "ally standing in blessed gets empower");
+    // Exit: move the ally away; effect application stops (count freezes).
+    t.app
+        .world_mut()
+        .entity_mut(ally)
+        .get_mut::<Transform>()
+        .unwrap()
+        .translation = Vec3::new(50.0, 0.0, 50.0);
+    let before = t.rec().effect_applied.len();
+    t.advance_ticks(30);
+    assert_eq!(
+        t.rec().effect_applied.len(),
+        before,
+        "no further applications after leaving the surface"
+    );
+}
+
+#[test]
+fn on_enter_only_fires_once_per_visit() {
+    let mut t = surf_app(6);
+    let painter = spawn_combatant(&mut t, "painter", Vec3::new(-5.0, 0.0, 0.0), obelisk_bevy::prelude::Faction::Player);
+    let victim = spawn_combatant(&mut t, "victim", Vec3::new(2.0, 0.0, 2.0), obelisk_bevy::prelude::Faction::Enemy);
+    load_timeline(&mut t, "burning_tick", "tests/fixtures/cast/burning_tick.cast.ron");
+    obelisk_bevy::spatial::boxes::insert_hurtbox(
+        &mut t.app.world_mut().commands(),
+        victim,
+        0.5,
+        Vec3::new(2.0, 0.0, 2.0),
+    );
+    t.app.world_mut().flush();
+    t.advance_ticks(3);
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "mud".into(),
+        position: Vec3::new(2.0, 0.0, 2.0),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    t.advance_ticks(40);
+    assert_eq!(
+        damage_events_for(&t, "burning_tick"),
+        1,
+        "enter-only fires once while standing"
+    );
+    // Leave and re-enter -> exactly one more.
+    t.app
+        .world_mut()
+        .entity_mut(victim)
+        .get_mut::<Transform>()
+        .unwrap()
+        .translation = Vec3::new(30.0, 0.0, 30.0);
+    t.advance_ticks(10);
+    t.app
+        .world_mut()
+        .entity_mut(victim)
+        .get_mut::<Transform>()
+        .unwrap()
+        .translation = Vec3::new(2.0, 0.0, 2.0);
+    t.advance_ticks(40);
+    assert_eq!(
+        damage_events_for(&t, "burning_tick"),
+        2,
+        "re-entering fires the enter edge again"
+    );
+}
