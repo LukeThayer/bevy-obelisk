@@ -1,0 +1,8 @@
+( skill_id: "fire_probe",
+  phase_durations: ( windup: 0.0, active: 0.05, recovery: 0.0 ),
+  collision_windows: [
+    ( id: "bolt", spawn: Scheduled( phase: Active, offset: 0.0 ), active_duration: 1.0,
+      shape: Sphere( radius: 0.3 ), motion: Linear( speed: 8.0 ),
+      hit_filter: Enemies, hit_mode: OncePerTarget ),
+  ],
+)

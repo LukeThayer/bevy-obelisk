@@ -455,3 +455,58 @@ fn dead_victims_stop_receiving_standing_ticks() {
         "no further standing ticks against a corpse"
     );
 }
+
+#[test]
+fn fire_hitbox_through_oil_ignites_once_and_consumes_the_patch() {
+    let mut t = surf_app(7);
+    let painter = spawn_combatant(&mut t, "oiler", Vec3::new(0.0, 0.0, -6.0), obelisk_bevy::prelude::Faction::Enemy);
+    let caster = spawn_combatant(&mut t, "pyro", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    load_timeline(&mut t, "fire_probe", "tests/fixtures/cast/fire_probe.cast.ron");
+    load_timeline(&mut t, "test_ignite", "tests/fixtures/cast/test_ignite.cast.ron");
+    // One oil patch 3m down the +X flight path.
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "oil".into(),
+        position: Vec3::new(3.0, 0.0, 0.0),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    grant_and_cast_dir(&mut t, caster, "fire_probe", Vec3::X);
+    t.advance_ticks(90);
+    // The ignite timeline executed at (about) the contact point...
+    let ignites: Vec<_> = t
+        .rec()
+        .hit_window_opened
+        .iter()
+        .filter(|w| w.skill_id == "test_ignite")
+        .collect();
+    assert_eq!(ignites.len(), 1, "ignite executes exactly once");
+    // ...and the oil patch was consumed.
+    assert_eq!(patch_count(&mut t, "oil"), 0, "oil consumed");
+    assert!(t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .any(|r| r.surface == "oil" && r.reason == SurfaceRemoveReason::Consumed));
+}
+
+#[test]
+fn non_matching_tags_do_not_ignite_oil() {
+    let mut t = surf_app(8);
+    let painter = spawn_combatant(&mut t, "oiler", Vec3::new(0.0, 0.0, -6.0), obelisk_bevy::prelude::Faction::Enemy);
+    let caster = spawn_combatant(&mut t, "frosty", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    load_timeline(&mut t, "cold_probe", "tests/fixtures/cast/cold_probe.cast.ron");
+    load_timeline(&mut t, "test_ignite", "tests/fixtures/cast/test_ignite.cast.ron");
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "oil".into(),
+        position: Vec3::new(3.0, 0.0, 0.0),
+        owner: painter,
+    });
+    t.app.world_mut().flush();
+    grant_and_cast_dir(&mut t, caster, "cold_probe", Vec3::X);
+    t.advance_ticks(90);
+    assert!(
+        !t.rec().hit_window_opened.iter().any(|w| w.skill_id == "test_ignite"),
+        "cold tags don't match tags_any=[fire]"
+    );
+    assert_eq!(patch_count(&mut t, "oil"), 1, "oil untouched");
+}

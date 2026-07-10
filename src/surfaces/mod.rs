@@ -21,7 +21,8 @@ pub use patch::{
     SurfaceRemoveReason, SurfaceRemoved, SurfaceSeq,
 };
 pub use systems::{
-    apply_standing_payloads, on_hitbox_ended_paint, paint_surfaces, StandingState, TrailPainted,
+    apply_standing_payloads, on_hitbox_ended_paint, paint_surfaces, surface_contact_triggers,
+    StandingState, SurfaceContacts, TrailPainted,
 };
 pub use types::{
     load_surfaces_dir, ContactReaction, StandingFilter, StandingPayload, SurfaceRegistry,
@@ -40,7 +41,11 @@ impl Plugin for ObeliskSurfacesPlugin {
         );
         app.add_systems(
             bevy::app::FixedUpdate,
-            (paint_surfaces, systems::apply_standing_payloads)
+            (
+                paint_surfaces,
+                systems::surface_contact_triggers,
+                systems::apply_standing_payloads,
+            )
                 .chain()
                 .in_set(crate::ObeliskSet::ResolveHits)
                 .before(crate::spatial::detect::detect_overlaps),
