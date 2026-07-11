@@ -44,7 +44,8 @@ impl Plugin for ObeliskSurfacesPlugin {
         // the deliberately-unordered `advance_casts` / `advance_triggered_execs` (see the Task-11
         // note in `lib.rs`) and shifts golden event ORDER (not behavior). Folding the clear into an
         // existing node keeps the graph — and every golden — byte-identical. See
-        // [`clear_surface_tick_scratch`] for the timing/correctness argument.
+        // [`clear_surface_tick_scratch`] for the timing/correctness argument, including the
+        // caveat for hosts that gate these FixedUpdate sets off (e.g. the editor's frozen scrub).
         app.add_systems(
             bevy::app::FixedUpdate,
             decay_surfaces.in_set(crate::ObeliskSet::Advance),

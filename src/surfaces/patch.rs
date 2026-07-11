@@ -56,11 +56,19 @@ pub struct SurfaceTickScratch {
 ///
 /// CAVEAT (outside FixedUpdate): a `PaintSurface` triggered from the Update schedule — e.g. the
 /// editor palette's instant paint — shares the scratch of the ENCLOSING FixedUpdate tick boundary
-/// rather than getting its own reset. Still correct: the scratch only ever makes dedup MORE
-/// conservative (by at most one tick's worth of stale membership entries), never less. A stale
-/// `evicted` entry names an already-despawned entity (distinct Entity generation — never matches a
-/// live patch), and a stale `painted` entry only ever suppresses a paint the committed `existing`
-/// query would dedup anyway — so it can only collapse a duplicate, never fabricate one.
+/// rather than getting its own reset. While the sim keeps ticking normally this is harmless: the
+/// scratch still clears at that tick's end like any FixedUpdate-triggered paint, so it holds at
+/// most one tick's worth of stale membership entries, and a stale `evicted` entry names an
+/// already-despawned entity (distinct Entity generation — never matches a live patch).
+///
+/// CAVEAT (host-gated schedules): the clear runs WITH the surfaces systems — a host that gates
+/// those sets off (the editor's frozen scrub) while still triggering `PaintSurface` from an
+/// ungated schedule (e.g. the editor's Reset re-applying patches) accumulates stale `painted`
+/// entries across the whole gated window instead of at most one tick's worth. A despawn-then-
+/// repaint at the same position during that window is then wrongly suppressed — the committed
+/// `existing` query no longer sees the despawned patch, but the stale batch entry does — though
+/// it self-heals once the sim ticks again. Hosts doing gated-window paint cycles should clear
+/// this resource themselves first (the editor's reset does).
 pub fn clear_surface_tick_scratch(scratch: &mut SurfaceTickScratch) {
     scratch.evicted.clear();
     scratch.painted.clear();

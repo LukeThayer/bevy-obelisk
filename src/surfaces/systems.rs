@@ -272,7 +272,8 @@ pub fn apply_standing_payloads(
 
     // Tick teardown: reset the shared paint/evict scratch for the next tick (all of this tick's
     // paint sites have run). Folded here — not a standalone system — to avoid perturbing the
-    // schedule's golden event order; see `clear_surface_tick_scratch`.
+    // schedule's golden event order; see `clear_surface_tick_scratch` for the correctness argument
+    // and its host-gated-schedule caveat (a host suspending these systems must clear it itself).
     clear_surface_tick_scratch(&mut scratch);
 }
 
