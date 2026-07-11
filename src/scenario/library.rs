@@ -1530,6 +1530,80 @@ pub fn charged_vs_uncharged() -> Scenario {
         )
 }
 
+/// Surfaces (spec §11), paint + standing tick + contact ignite end-to-end through the public
+/// cast/paint pipeline. A `painter` (Player) and a `victim` (Enemy):
+///   - a `paint_roller` cast rolls a `frost` TRAIL down +X (Task 4 window paint — repeated
+///     `SurfacePainted surface=frost` splats at ~0.5 m spacing along the flight);
+///   - a pre-painted `burning` patch under the victim ticks `burning_tick` every 0.2 s, attributed
+///     to the painter (Task 5 standing payload — repeated `HitWindow`/`HitConfirmed`/`Damage`
+///     skill=burning_tick against the victim, `caster=painter`);
+///   - a `fire_probe` cast crosses a pre-painted `oil` slick on its path, whose `on_skill_contact`
+///     (`tags_any=[fire]`) fires `test_ignite` at the contact point exactly ONCE and CONSUMES the
+///     oil (Task 6 reaction — `HitWindow skill=test_ignite window=boom` + `SurfaceRemoved
+///     surface=oil reason=Consumed`).
+///
+/// Geometry keeps the three interactions independent so the golden reads cleanly: the probes travel
+/// z=0 while the victim and its `burning` patch sit at z=2 (off-axis — the probes never strike the
+/// victim and `test_ignite`'s 1.5 m blast doesn't reach it), and `oil` reacts only to fire tags so
+/// the earlier `cold` `paint_roller` passes through it inertly. Pre-painting uses the world-hook
+/// `Action::PaintSurface` (the public `PaintSurface` trigger — a `.cast.ron` window can't author
+/// ground state a probe then reacts to). Mirrors the SHAPE of
+/// `tests/surfaces.rs::surfaces_pipeline_is_deterministic_across_runs` (which locks reproducibility,
+/// two runs agreeing) but as a committed `.trace` that also locks the BEHAVIOR — a refactor that
+/// moves a paint splat, changes the tick damage, or drops the ignite/consume now fails loudly.
+pub fn surfaces_paint_stand_ignite() -> Scenario {
+    Scenario::new("surfaces_paint_stand_ignite", 42, 120)
+        .describe("Surfaces §11: a frost trail is painted, a burning patch ticks a victim (burning_tick, attributed to the painter), and a fire probe crosses an oil slick -> test_ignite fires once and consumes the oil.")
+        .cast_asset("paint_roller")
+        .cast_asset("fire_probe")
+        .cast_asset("burning_tick")
+        .cast_asset("test_ignite")
+        .actor("painter", Faction::Player, 100.0, 100.0, Vec3::ZERO)
+        .with_skill("paint_roller")
+        .with_skill("fire_probe")
+        // High life so the victim survives every standing tick (a corpse stops ticking — see
+        // `dead_victims_stop_receiving_standing_ticks`), keeping the tick cadence bounded + clean.
+        .actor("victim", Faction::Enemy, 500.0, 0.0, Vec3::new(3.0, 0.0, 2.0))
+        // Pre-paint the ground state a few ticks in (the victim's hurtbox is registered in the
+        // spatial index by then, so the first standing tick can confirm on it): `burning` under the
+        // victim, `oil` on the probe's +X path at x=5.
+        .at(
+            3,
+            Action::PaintSurface {
+                surface: "burning".into(),
+                pos: Vec3::new(3.0, 0.0, 2.0),
+                owner: "painter".into(),
+            },
+        )
+        .at(
+            3,
+            Action::PaintSurface {
+                surface: "oil".into(),
+                pos: Vec3::new(5.0, 0.0, 0.0),
+                owner: "painter".into(),
+            },
+        )
+        // Roll the frost trail down +X (x=0..8 along z=0).
+        .at(
+            4,
+            Action::Cast {
+                caster: "painter".into(),
+                skill: "paint_roller".into(),
+                aim: Aim::Dir(Vec3::X),
+            },
+        )
+        // Later (well after paint_roller's cast has finished — no AlreadyCasting gate), send the
+        // fire probe down the same axis; it crosses the oil at x=5 and ignites + consumes it.
+        .at(
+            40,
+            Action::Cast {
+                caster: "painter".into(),
+                skill: "fire_probe".into(),
+                aim: Aim::Dir(Vec3::X),
+            },
+        )
+}
+
 /// The full regression matrix.
 ///
 /// Intentionally-excluded scenarios (covered elsewhere, not omissions):
@@ -1615,6 +1689,7 @@ pub fn feature_matrix() -> Vec<Scenario> {
         blizzard_emitter(),
         acquisition_fallback(),
         charged_vs_uncharged(),
+        surfaces_paint_stand_ignite(),
     ]
 }
 

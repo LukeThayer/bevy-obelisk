@@ -78,6 +78,16 @@ pub enum Action {
         skill: String,
         pos: Vec3,
     },
+    /// Paint a surface patch at `pos` owned by `owner`, via the public `PaintSurface` trigger (the
+    /// same world-hook the seam tests and the editor's stage-paint tool use). A world-hook action in
+    /// the spirit of `Obstacle`/`WorldHit`: it lets a scenario pre-paint ground state (e.g. a
+    /// `burning` patch under a victim, or an `oil` slick on a probe's path) that a `.cast.ron` window
+    /// can't author. No-op if `owner` doesn't resolve; an unknown `surface` warns (see `try_paint`).
+    PaintSurface {
+        surface: String,
+        pos: Vec3,
+        owner: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -448,6 +458,15 @@ pub fn apply_action(app: &mut App, action: &Action) {
                 app.world_mut().trigger(HitboxWorldHit {
                     hitbox,
                     position: *pos,
+                });
+            }
+        }
+        Action::PaintSurface { surface, pos, owner } => {
+            if let Some(o) = id_of(app, owner) {
+                app.world_mut().trigger(crate::surfaces::PaintSurface {
+                    surface: surface.clone(),
+                    position: *pos,
+                    owner: o,
                 });
             }
         }

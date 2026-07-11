@@ -1,5 +1,6 @@
 use crate::events::*;
 use crate::ids::ObeliskEntityIndex;
+use crate::surfaces::{SurfacePainted, SurfaceRemoved};
 use bevy::prelude::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -339,6 +340,46 @@ impl Plugin for TraceRecorderPlugin {
                     t,
                     "Loot",
                     format!("source={} drops={:?}", id(&ix, e.source), e.drops)
+                );
+            },
+        );
+        // Surface events (Task: surfaces golden). A patch entity carries no ObeliskId, so the
+        // patch position — quantized to 3 dp exactly like Damage/dur — is what pins paint locations
+        // (so a refactor that MOVES a paint fails loudly); `owner` resolves to the painter's id.
+        // Inert for surface-less scenarios (they emit neither event), so all prior goldens are
+        // byte-identical.
+        app.add_observer(
+            |e: On<SurfacePainted>,
+             ix: Res<ObeliskEntityIndex>,
+             t: Res<TickCounter>,
+             mut tr: ResMut<Trace>| {
+                let e = e.event();
+                push!(
+                    tr,
+                    t,
+                    "SurfacePainted",
+                    format!(
+                        "surface={} pos=({:.3},{:.3},{:.3}) owner={}",
+                        e.surface,
+                        e.position.x,
+                        e.position.y,
+                        e.position.z,
+                        id(&ix, e.owner)
+                    )
+                );
+            },
+        );
+        app.add_observer(
+            |e: On<SurfaceRemoved>, t: Res<TickCounter>, mut tr: ResMut<Trace>| {
+                let e = e.event();
+                push!(
+                    tr,
+                    t,
+                    "SurfaceRemoved",
+                    format!(
+                        "surface={} pos=({:.3},{:.3},{:.3}) reason={:?}",
+                        e.surface, e.position.x, e.position.y, e.position.z, e.reason
+                    )
                 );
             },
         );

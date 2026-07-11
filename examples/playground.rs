@@ -524,6 +524,15 @@ fn apply_action(
                 });
             }
         }
+        Action::PaintSurface { surface, pos, owner } => {
+            if let Some(o) = index.entity(owner) {
+                commands.trigger(PaintSurface {
+                    surface: surface.clone(),
+                    position: *pos,
+                    owner: o,
+                });
+            }
+        }
     }
 }
 

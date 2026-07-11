@@ -1,0 +1,58 @@
+   3	SurfacePainted	surface=burning pos=(3.000,0.000,2.000) owner=painter
+   3	SurfacePainted	surface=oil pos=(5.000,0.000,0.000) owner=painter
+   5	CastBegan	caster=painter skill=paint_roller dur=0.050
+   5	HitWindow	caster=painter skill=burning_tick window=tick
+   5	CastPhase	caster=painter skill=paint_roller Windup->Active
+   5	HitWindow	caster=painter skill=paint_roller window=roll
+   5	SurfacePainted	surface=frost pos=(0.133,0.000,0.000) owner=painter
+   5	HitConfirmed	caster=painter target=victim skill=burning_tick
+   5	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=495.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+   7	CastPhase	caster=painter skill=paint_roller Active->Done
+   9	SurfacePainted	surface=frost pos=(0.667,0.000,0.000) owner=painter
+  13	SurfacePainted	surface=frost pos=(1.200,0.000,0.000) owner=painter
+  17	HitWindow	caster=painter skill=burning_tick window=tick
+  17	SurfacePainted	surface=frost pos=(1.733,0.000,0.000) owner=painter
+  17	HitConfirmed	caster=painter target=victim skill=burning_tick
+  17	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=490.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  21	SurfacePainted	surface=frost pos=(2.267,0.000,0.000) owner=painter
+  25	SurfacePainted	surface=frost pos=(2.800,0.000,0.000) owner=painter
+  29	HitWindow	caster=painter skill=burning_tick window=tick
+  29	SurfacePainted	surface=frost pos=(3.333,0.000,0.000) owner=painter
+  29	HitConfirmed	caster=painter target=victim skill=burning_tick
+  29	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=485.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  33	SurfacePainted	surface=frost pos=(3.867,0.000,0.000) owner=painter
+  37	SurfacePainted	surface=frost pos=(4.400,0.000,0.000) owner=painter
+  41	CastBegan	caster=painter skill=fire_probe dur=0.050
+  41	HitWindow	caster=painter skill=burning_tick window=tick
+  41	CastPhase	caster=painter skill=fire_probe Windup->Active
+  41	HitWindow	caster=painter skill=fire_probe window=bolt
+  41	SurfacePainted	surface=frost pos=(4.933,0.000,0.000) owner=painter
+  41	HitConfirmed	caster=painter target=victim skill=burning_tick
+  41	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=480.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  43	CastPhase	caster=painter skill=fire_probe Active->Done
+  45	SurfacePainted	surface=frost pos=(5.467,0.000,0.000) owner=painter
+  49	SurfacePainted	surface=frost pos=(6.000,0.000,0.000) owner=painter
+  53	HitWindow	caster=painter skill=burning_tick window=tick
+  53	SurfacePainted	surface=frost pos=(6.533,0.000,0.000) owner=painter
+  53	HitConfirmed	caster=painter target=victim skill=burning_tick
+  53	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=475.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  57	SurfacePainted	surface=frost pos=(7.067,0.000,0.000) owner=painter
+  61	SurfacePainted	surface=frost pos=(7.600,0.000,0.000) owner=painter
+  65	HitWindow	caster=painter skill=burning_tick window=tick
+  65	SurfacePainted	surface=frost pos=(8.133,0.000,0.000) owner=painter
+  65	HitConfirmed	caster=painter target=victim skill=burning_tick
+  65	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=470.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  75	SurfaceRemoved	surface=oil pos=(5.000,0.000,0.000) reason=Consumed
+  76	HitWindow	caster=painter skill=test_ignite window=boom
+  78	HitWindow	caster=painter skill=burning_tick window=tick
+  78	HitConfirmed	caster=painter target=victim skill=burning_tick
+  78	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=465.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+  91	HitWindow	caster=painter skill=burning_tick window=tick
+  91	HitConfirmed	caster=painter target=victim skill=burning_tick
+  91	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=460.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 103	HitWindow	caster=painter skill=burning_tick window=tick
+ 103	HitConfirmed	caster=painter target=victim skill=burning_tick
+ 103	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=455.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000
+ 115	HitWindow	caster=painter skill=burning_tick window=tick
+ 115	HitConfirmed	caster=painter target=victim skill=burning_tick
+ 115	Damage	caster=painter target=victim skill=burning_tick dmg=5.000 kill=false life_after=450.000 crit=false prevented=0.000 life_gained=0.000 mana_gained=0.000

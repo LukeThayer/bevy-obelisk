@@ -25,6 +25,11 @@ pub fn run_scenario(scenario: &Scenario) -> Trace {
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .insert_resource(RecordNet(scenario.record_net));
     app.add_obelisk_skills(SkillSource::Dir("tests/fixtures/skills".into()));
+    // Load the surface-type registry UNCONDITIONALLY (after skills, so tick_skill/trigger_skill
+    // refs validate). Inert for surface-less scenarios: no paint requests ⇒ no patches ⇒ no
+    // SurfacePainted/SurfaceRemoved events, so every pre-existing golden stays byte-identical
+    // (verified). Only the surfaces scenario, which actually paints, produces surface trace lines.
+    app.add_obelisk_surfaces(std::path::Path::new("tests/fixtures/surfaces"));
     app.seed_combat_rng(scenario.seed);
 
     // Loot: if any actor rolls a drop table on death, load the drop-table registry so the
@@ -73,13 +78,20 @@ pub fn run_scenario(scenario: &Scenario) -> Trace {
     app.finish();
     app.cleanup();
 
-    // load referenced cast timelines
+    // load referenced cast timelines. Golden-scenario cast timelines live in `assets/skills/`; the
+    // surfaces fixtures author theirs under `tests/fixtures/cast/` (where `tests/surfaces.rs` also
+    // loads them — they are test-only and intentionally not shipped in `assets/skills/`). Prefer
+    // `assets/skills/` (the resolved path is UNCHANGED for every pre-existing scenario, so their
+    // goldens stay byte-identical) and fall back to `tests/fixtures/cast/`.
     let mut handles = vec![];
     for skill in &scenario.cast_assets {
-        let h: Handle<CastTimeline> = app
-            .world()
-            .resource::<AssetServer>()
-            .load(format!("assets/skills/{skill}.cast.ron"));
+        let shipped = format!("assets/skills/{skill}.cast.ron");
+        let path = if std::path::Path::new(&shipped).exists() {
+            shipped
+        } else {
+            format!("tests/fixtures/cast/{skill}.cast.ron")
+        };
+        let h: Handle<CastTimeline> = app.world().resource::<AssetServer>().load(path);
         handles.push((skill.clone(), h));
     }
     for _ in 0..3000 {
