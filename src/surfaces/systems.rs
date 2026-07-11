@@ -11,7 +11,8 @@ use crate::events::HitboxEnded;
 use crate::spatial::boxes::Hitbox;
 use crate::spatial::filter::passes_filter;
 use crate::surfaces::patch::{
-    patch_contains, try_paint, SurfacePatch, SurfaceRemoveReason, SurfaceRemoved, SurfaceSeq,
+    clear_surface_tick_scratch, patch_contains, try_paint, SurfacePatch, SurfaceRemoveReason,
+    SurfaceRemoved, SurfaceSeq, SurfaceTickScratch,
 };
 use crate::surfaces::types::SurfaceRegistry;
 use crate::timeline::triggered::{execute_skill_timeline, ExecPayload};
@@ -51,17 +52,17 @@ pub fn paint_surfaces(
     mut commands: Commands,
     registry: Res<SurfaceRegistry>,
     mut seq: ResMut<SurfaceSeq>,
+    // The tick-scoped dedup ledger, shared with the observers (reset once per tick — see
+    // `clear_surface_tick_scratch`): a burst of same-type paints at cap — two Trail hitboxes here,
+    // or a Trail plus a same-tick OnEnd/request observer — cannot both evict the same oldest patch
+    // off the stale `existing` snapshot, nor double-spawn at one spot (I1 — see `try_paint`).
+    mut scratch: ResMut<SurfaceTickScratch>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
     factions: Query<&Faction>,
     mut hitboxes: Query<(Entity, &Hitbox, &Transform, Option<&mut TrailPainted>)>,
     existing: Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
 ) {
-    let mut batch: Vec<(String, Vec3)> = Vec::new();
-    // ONE eviction ledger for the whole run: a burst of same-type paints at cap (two Trail
-    // hitboxes in one `paint_surfaces` tick) shares it so they cannot both evict the same oldest
-    // patch off the stale `existing` snapshot (I1 — see `try_paint`).
-    let mut evicted: HashSet<Entity> = HashSet::new();
     let mut sorted: Vec<_> = hitboxes.iter_mut().collect();
     sorted.sort_by_key(|(e, _, _, _)| e.index());
     for (e, hb, tf, trail) in sorted {
@@ -81,8 +82,7 @@ pub fn paint_surfaces(
                     &registry,
                     &mut seq,
                     &existing,
-                    &mut batch,
-                    &mut evicted,
+                    &mut scratch,
                     &paints.surface,
                     pos,
                     Some(paints.radius),
@@ -100,8 +100,7 @@ pub fn paint_surfaces(
                         &registry,
                         &mut seq,
                         &existing,
-                        &mut batch,
-                        &mut evicted,
+                        &mut scratch,
                         &paints.surface,
                         pos,
                         Some(paints.radius),
@@ -124,6 +123,10 @@ pub fn on_hitbox_ended_paint(
     ev: On<HitboxEnded>,
     registry: Res<SurfaceRegistry>,
     mut seq: ResMut<SurfaceSeq>,
+    // Shared across every paint entry point THIS tick (reset once per tick — see
+    // `clear_surface_tick_scratch`): an OnEnd paint and a same-tick Trail/request paint dedup and
+    // evict against ONE ledger, not separate locals.
+    mut scratch: ResMut<SurfaceTickScratch>,
     handles: Res<CastTimelineHandles>,
     timelines: Res<Assets<CastTimeline>>,
     factions: Query<&Faction>,
@@ -138,17 +141,12 @@ pub fn on_hitbox_ended_paint(
         return;
     }
     let owner_faction = factions.get(e.caster).copied().unwrap_or_default();
-    let mut batch = Vec::new();
-    // Fresh per invocation (same blindness as today): residual same-tick cross-OBSERVER bursts at
-    // cap remain snapshot-blind; rare, deterministic, tracked for the arena increment.
-    let mut evicted: HashSet<Entity> = HashSet::new();
     try_paint(
         &mut commands,
         &registry,
         &mut seq,
         &existing,
-        &mut batch,
-        &mut evicted,
+        &mut scratch,
         &paints.surface,
         e.position,
         Some(paints.radius),
@@ -177,6 +175,12 @@ pub fn apply_standing_payloads(
     time: Res<Time<Fixed>>,
     registry: Res<SurfaceRegistry>,
     mut state: ResMut<StandingState>,
+    // The shared per-tick paint/evict scratch is RESET here, at the tail of the last surfaces
+    // system in the tick — every FixedUpdate paint site has already run, so the whole tick's
+    // paints shared one ledger and the next tick starts clean (see `clear_surface_tick_scratch`
+    // for why this reset is folded here rather than run as its own — golden-order-perturbing —
+    // system). `apply_standing_payloads` reads no scratch state; it only owns the end-of-tick reset.
+    mut scratch: ResMut<SurfaceTickScratch>,
     patches: Query<(Entity, &SurfacePatch, &Transform)>,
     combatants: Query<(Entity, &Transform, &Faction, &Attributes), With<Combatant>>,
 ) {
@@ -265,6 +269,11 @@ pub fn apply_standing_payloads(
         .next_due
         .retain(|(v, _), _| combatants.get(*v).is_ok());
     state.inside_prev = inside_now;
+
+    // Tick teardown: reset the shared paint/evict scratch for the next tick (all of this tick's
+    // paint sites have run). Folded here — not a standalone system — to avoid perturbing the
+    // schedule's golden event order; see `clear_surface_tick_scratch`.
+    clear_surface_tick_scratch(&mut scratch);
 }
 
 /// Surface types this hitbox has already reacted with — the once-per-(hitbox, surface-type)

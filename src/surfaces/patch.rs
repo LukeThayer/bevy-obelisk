@@ -28,6 +28,44 @@ pub struct SurfacePatch {
 #[derive(Resource, Default)]
 pub struct SurfaceSeq(pub u64);
 
+/// Same-tick paint/evict dedup state shared by EVERY paint entry point (the trail system, the
+/// OnEnd observer, and `PaintSurface` request observers — which each run as separate invocations
+/// within one tick and were previously blind to each other's deferred spawns/despawns).
+/// Reset ONCE per sim tick (see [`clear_surface_tick_scratch`]); never serialized; deterministic
+/// (insertion-order-free: only membership queries, plus the paint batch which is scanned linearly).
+#[derive(Resource, Default)]
+pub struct SurfaceTickScratch {
+    /// Patches despawn-queued by eviction this tick (the evict-once guard).
+    pub evicted: std::collections::HashSet<Entity>,
+    /// (surface id, position) pairs paint-queued this tick (the merge-dedup batch).
+    pub painted: Vec<(String, Vec3)>,
+}
+
+/// Reset the shared [`SurfaceTickScratch`] for the next sim tick — called at the END of
+/// `apply_standing_payloads` (the last surfaces system in the tick), AFTER every FixedUpdate paint
+/// site (`on_hitbox_ended_paint` in Advance, `paint_surfaces` in ResolveHits) has populated it, so
+/// a whole tick's paints share one ledger and the next tick starts empty.
+///
+/// WHY a folded helper, not a dedicated system: registering a standalone clear system in ANY
+/// FixedUpdate set adds a node to the schedule graph, which perturbs Bevy's topological tie-break
+/// between the deliberately-unordered `advance_casts` / `advance_triggered_execs` (see the Task-11
+/// note in `lib.rs`) and shifts golden event ORDER (a scheduling artifact — same paints, damage,
+/// counts). Folding the reset into an existing node changes no edges and keeps every golden
+/// byte-identical. Clearing at tick END (vs the top) is equivalent — nothing paints after this —
+/// and, as a bonus, leaves no cross-tick residue for the between-tick request observers.
+///
+/// CAVEAT (outside FixedUpdate): a `PaintSurface` triggered from the Update schedule — e.g. the
+/// editor palette's instant paint — shares the scratch of the ENCLOSING FixedUpdate tick boundary
+/// rather than getting its own reset. Still correct: the scratch only ever makes dedup MORE
+/// conservative (by at most one tick's worth of stale membership entries), never less. A stale
+/// `evicted` entry names an already-despawned entity (distinct Entity generation — never matches a
+/// live patch), and a stale `painted` entry only ever suppresses a paint the committed `existing`
+/// query would dedup anyway — so it can only collapse a duplicate, never fabricate one.
+pub fn clear_surface_tick_scratch(scratch: &mut SurfaceTickScratch) {
+    scratch.evicted.clear();
+    scratch.painted.clear();
+}
+
 #[derive(Event, Clone, Debug)]
 pub struct SurfacePainted {
     pub patch: Entity,
@@ -71,18 +109,19 @@ pub fn patch_contains(patch_pos: Vec3, radius: f32, p: Vec3) -> bool {
 }
 
 /// Spawn one patch, enforcing the type's `merge_radius` dedup and `max_patches` replace-oldest
-/// cap. `painted_this_tick` self-dedups paints queued in the SAME tick (deferred spawns aren't
-/// visible in `existing` yet); the cap is enforced against COMMITTED patches, so a burst tick
-/// can transiently overshoot by its own paint count — it converges on the next paint (documented
-/// v1 behavior). Returns the spawned entity, or `None` when deduped/unknown.
+/// cap. `scratch.painted` self-dedups paints queued in the SAME tick (deferred spawns aren't
+/// visible in `existing` yet) and `scratch.evicted` guards each patch against a double-evict —
+/// both shared across every paint entry point this tick (see [`SurfaceTickScratch`]). The cap is
+/// enforced against COMMITTED patches, so a burst tick can transiently overshoot by its own paint
+/// count — it converges on the next paint (documented v1 behavior). Returns the spawned entity,
+/// or `None` when deduped/unknown.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn try_paint(
     commands: &mut Commands,
     registry: &SurfaceRegistry,
     seq: &mut SurfaceSeq,
     existing: &Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
-    painted_this_tick: &mut Vec<(String, Vec3)>,
-    evicted_this_tick: &mut std::collections::HashSet<Entity>,
+    scratch: &mut SurfaceTickScratch,
     surface_id: &str,
     position: Vec3,
     radius_override: Option<f32>,
@@ -99,7 +138,8 @@ pub(crate) fn try_paint(
     let near_existing = existing
         .iter()
         .any(|(_, p, tf)| p.surface == surface_id && xz_dist(tf.translation, position) < st.merge_radius);
-    let near_batch = painted_this_tick
+    let near_batch = scratch
+        .painted
         .iter()
         .any(|(s, pos)| s == surface_id && xz_dist(*pos, position) < st.merge_radius);
     if near_existing || near_batch {
@@ -107,12 +147,13 @@ pub(crate) fn try_paint(
     }
     // Replace-oldest cap (committed patches only — see fn doc). I1: the `existing` snapshot never
     // reflects THIS-tick deferred despawns, so a same-type patch already evicted by an earlier
-    // paint in this run still shows up here. Exclude anything in `evicted_this_tick` — it is
-    // as-good-as-gone, so it is neither re-selected as a victim NOR counted toward the live total
-    // (without this, two burst paints at cap both pick the same oldest patch → double-fire).
+    // paint in this run (or a separate invocation earlier this tick) still shows up here. Exclude
+    // anything in `scratch.evicted` — it is as-good-as-gone, so it is neither re-selected as a
+    // victim NOR counted toward the live total (without this, two burst paints at cap both pick the
+    // same oldest patch → double-fire).
     let mut same: Vec<(Entity, u64, Vec3, String)> = existing
         .iter()
-        .filter(|(e, p, _)| p.surface == surface_id && !evicted_this_tick.contains(e))
+        .filter(|(e, p, _)| p.surface == surface_id && !scratch.evicted.contains(e))
         .map(|(e, p, tf)| (e, p.seq, tf.translation, p.surface.clone()))
         .collect();
     if same.len() + 1 > st.max_patches {
@@ -121,7 +162,7 @@ pub(crate) fn try_paint(
             // Insert-guarded: even if the filter above ever misses, a second attempt to evict the
             // same entity is a structural no-op — no duplicate `SurfaceRemoved{Evicted}`, no double
             // `despawn` warn. This is the last-line guarantee the removal-event stream stays clean.
-            if evicted_this_tick.insert(*e) {
+            if scratch.evicted.insert(*e) {
                 commands.trigger(SurfaceRemoved {
                     patch: *e,
                     surface: surf.clone(),
@@ -153,7 +194,7 @@ pub(crate) fn try_paint(
         position,
         owner,
     });
-    painted_this_tick.push((surface_id.to_string(), position));
+    scratch.painted.push((surface_id.to_string(), position));
     Some(patch)
 }
 
@@ -162,23 +203,22 @@ pub fn on_paint_surface(
     ev: On<PaintSurface>,
     registry: Res<SurfaceRegistry>,
     mut seq: ResMut<SurfaceSeq>,
+    // Shared across every paint entry point THIS tick (reset once per tick — see
+    // `clear_surface_tick_scratch`): two same-tick `PaintSurface` triggers run as separate observer
+    // invocations but dedup/evict against ONE ledger.
+    mut scratch: ResMut<SurfaceTickScratch>,
     existing: Query<(Entity, &SurfacePatch, &Transform), Without<Hitbox>>,
     factions: Query<&Faction>,
     mut commands: Commands,
 ) {
     let e = ev.event();
     let owner_faction = factions.get(e.owner).copied().unwrap_or_default();
-    let mut batch = Vec::new();
-    // Fresh per invocation (same blindness as today): residual same-tick cross-OBSERVER bursts at
-    // cap remain snapshot-blind; rare, deterministic, tracked for the arena increment.
-    let mut evicted: std::collections::HashSet<Entity> = std::collections::HashSet::new();
     try_paint(
         &mut commands,
         &registry,
         &mut seq,
         &existing,
-        &mut batch,
-        &mut evicted,
+        &mut scratch,
         &e.surface,
         e.position,
         None,

@@ -877,3 +877,112 @@ fn same_tick_burst_paints_evict_each_patch_at_most_once() {
     // evicts exactly one fewer than it paints). This is the honest steady state — NOT a leak.
     assert_eq!(live, 4, "two lockstep painters steady-state one over cap (3 + 1)");
 }
+
+/// Cross-INVOCATION evict-once (#11): the observer path's blind spot. Two `PaintSurface` triggers
+/// in ONE tick run as two SEPARATE `on_paint_surface` invocations (one flush, no intervening
+/// update/clear). Each is at `max_patches`; each reads the SAME committed `existing` snapshot
+/// (neither sees the other's DEFERRED despawn) and — before the shared tick scratch — each held a
+/// FRESH per-invocation `evicted` set, so both selected the SAME oldest patch as their victim →
+/// duplicate `SurfaceRemoved{Evicted}` + double `despawn` (Bevy warn). The system-path ledger
+/// never covered this (each observer invocation owned its own locals). The `SurfaceTickScratch`
+/// resource, shared across every invocation within the tick, makes the double-fire structurally
+/// impossible: invocation A ledgers the victim; invocation B excludes it (from both victim
+/// selection AND the live count) and evicts nothing.
+///
+/// Invariants pinned:
+///   * NO duplicate patch Entity in the Evicted stream (the direct double-fire regression).
+///   * Conservation: painted − evicted == live (`capped` lifetime 60 s — nothing expires/consumes).
+#[test]
+fn cross_invocation_burst_evict_is_once_only() {
+    let mut t = surf_app(15);
+    let owner = spawn_combatant(&mut t, "painter", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    t.app.update();
+
+    // Pre-fill the cap: 3 `capped` patches with distinct increasing seq (flush+update between each
+    // so they commit — these are the eviction victims at x ∈ {0, 2, 4}).
+    for i in 0..3 {
+        t.app.world_mut().trigger(PaintSurface {
+            surface: "capped".into(),
+            position: Vec3::new(i as f32 * 2.0, 0.0, 0.0),
+            owner,
+        });
+        t.app.world_mut().flush();
+        t.app.update();
+    }
+    assert_eq!(patch_count(&mut t, "capped"), 3, "cap pre-filled to max_patches");
+
+    // Burst: TWO far-apart `capped` paints in ONE tick — two `on_paint_surface` invocations, a
+    // single flush, NO intervening update (so the Validate clear never runs between them). Both
+    // are at cap; pre-fix each picks the same oldest (seq 1, x = 0) off the stale snapshot.
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "capped".into(),
+        position: Vec3::new(50.0, 0.0, 0.0),
+        owner,
+    });
+    t.app.world_mut().trigger(PaintSurface {
+        surface: "capped".into(),
+        position: Vec3::new(60.0, 0.0, 0.0),
+        owner,
+    });
+    t.app.world_mut().flush();
+
+    let evicted_patches: Vec<Entity> = t
+        .rec()
+        .surfaces_removed
+        .iter()
+        .filter(|r| r.surface == "capped" && r.reason == SurfaceRemoveReason::Evicted)
+        .map(|r| r.patch)
+        .collect();
+    // PRIMARY: no patch entity evicted more than once across the two invocations.
+    let unique: std::collections::HashSet<Entity> = evicted_patches.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        evicted_patches.len(),
+        "cross-invocation double-fire: a patch was evicted more than once — {evicted_patches:?}"
+    );
+    // Non-vacuous: the burst actually evicted at least one patch.
+    assert!(
+        !evicted_patches.is_empty(),
+        "expected the at-cap burst to evict at least one patch"
+    );
+    // Conservation over `capped`: painted − evicted == live (nothing expired/consumed).
+    let painted = t.rec().surfaces_painted.iter().filter(|p| p.surface == "capped").count();
+    let evicted = evicted_patches.len();
+    let live = patch_count(&mut t, "capped");
+    assert_eq!(
+        painted - evicted,
+        live,
+        "conservation broken: painted {painted} − evicted {evicted} != live {live}"
+    );
+}
+
+/// Cross-INVOCATION paint dedup (#11): two same-position, same-surface `PaintSurface` triggers in
+/// ONE tick (two `on_paint_surface` invocations, one flush). Each invocation reads the committed
+/// `existing` query — which CANNOT see the other invocation's DEFERRED spawn — and, before the
+/// shared scratch, held a FRESH per-invocation paint batch, so both spawned → TWO overlapping
+/// patches at the same spot despite `merge_radius`. The shared `SurfaceTickScratch.painted` batch
+/// (visible to every invocation this tick) collapses them to exactly ONE.
+#[test]
+fn cross_invocation_paint_dedup() {
+    let mut t = surf_app(16);
+    let owner = spawn_combatant(&mut t, "painter", Vec3::ZERO, obelisk_bevy::prelude::Faction::Player);
+    t.app.update();
+
+    // Two identical-position frost paints in ONE tick (merge_radius 0.25 ≫ 0 separation).
+    let pos = Vec3::new(2.0, 0.0, 0.0);
+    t.app.world_mut().trigger(PaintSurface { surface: "frost".into(), position: pos, owner });
+    t.app.world_mut().trigger(PaintSurface { surface: "frost".into(), position: pos, owner });
+    t.app.world_mut().flush();
+    t.app.update();
+
+    assert_eq!(
+        patch_count(&mut t, "frost"),
+        1,
+        "same-tick same-spot paints across observer invocations dedup to exactly ONE patch"
+    );
+    assert_eq!(
+        t.rec().surfaces_painted.iter().filter(|p| p.surface == "frost").count(),
+        1,
+        "exactly one SurfacePainted across the two invocations"
+    );
+}

@@ -17,8 +17,9 @@ pub mod systems;
 pub mod types;
 
 pub use patch::{
-    decay_surfaces, on_paint_surface, patch_contains, PaintSurface, SurfacePainted, SurfacePatch,
-    SurfaceRemoveReason, SurfaceRemoved, SurfaceSeq,
+    clear_surface_tick_scratch, decay_surfaces, on_paint_surface, patch_contains, PaintSurface,
+    SurfacePainted, SurfacePatch, SurfaceRemoveReason, SurfaceRemoved, SurfaceSeq,
+    SurfaceTickScratch,
 };
 pub use systems::{
     apply_standing_payloads, on_hitbox_ended_paint, paint_surfaces, surface_contact_triggers,
@@ -33,8 +34,17 @@ pub struct ObeliskSurfacesPlugin;
 impl Plugin for ObeliskSurfacesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SurfaceRegistry>()
-            .init_resource::<SurfaceSeq>();
+            .init_resource::<SurfaceSeq>()
+            .init_resource::<SurfaceTickScratch>();
         app.init_resource::<systems::StandingState>();
+        // NOTE (per-tick scratch clear): the shared [`SurfaceTickScratch`] is reset ONCE per sim
+        // tick from INSIDE `apply_standing_payloads` (the last surfaces system in the tick — see
+        // its end), NOT via a dedicated system. A standalone clear system — in ANY FixedUpdate set
+        // — adds a node to the schedule graph, which perturbs Bevy's topological tie-break between
+        // the deliberately-unordered `advance_casts` / `advance_triggered_execs` (see the Task-11
+        // note in `lib.rs`) and shifts golden event ORDER (not behavior). Folding the clear into an
+        // existing node keeps the graph — and every golden — byte-identical. See
+        // [`clear_surface_tick_scratch`] for the timing/correctness argument.
         app.add_systems(
             bevy::app::FixedUpdate,
             decay_surfaces.in_set(crate::ObeliskSet::Advance),
